@@ -1,4 +1,5 @@
-# Copyright (c) 2006,2007 Mitch Garnaat http://garnaat.org/
+# Copyright (c) 2006-2011 Mitch Garnaat http://garnaat.org/
+# Copyright (c) 2011, Eucalyptus Systems, Inc.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the
@@ -14,7 +15,7 @@
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
 # OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABIL-
 # ITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-# SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
+# SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
 # WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
@@ -22,34 +23,45 @@
 """
 Represents an EC2 Security Group
 """
-from boto.ec2.ec2object import EC2Object
+from boto.ec2.ec2object import TaggedEC2Object
 from boto.exception import BotoClientError
 
-class SecurityGroup(EC2Object):
-    
+class SecurityGroup(TaggedEC2Object):
+
     def __init__(self, connection=None, owner_id=None,
-                 name=None, description=None):
-        EC2Object.__init__(self, connection)
+                 name=None, description=None, id=None):
+        TaggedEC2Object.__init__(self, connection)
+        self.id = id
         self.owner_id = owner_id
         self.name = name
         self.description = description
-        self.rules = []
+        self.vpc_id = None
+        self.rules = IPPermissionsList()
+        self.rules_egress = IPPermissionsList()
 
     def __repr__(self):
         return 'SecurityGroup:%s' % self.name
 
     def startElement(self, name, attrs, connection):
-        if name == 'item':
-            self.rules.append(IPPermissions(self))
-            return self.rules[-1]
+        retval = TaggedEC2Object.startElement(self, name, attrs, connection)
+        if retval is not None:
+            return retval
+        if name == 'ipPermissions':
+            return self.rules
+        elif name == 'ipPermissionsEgress':
+            return self.rules_egress
         else:
             return None
 
     def endElement(self, name, value, connection):
         if name == 'ownerId':
             self.owner_id = value
+        elif name == 'groupId':
+            self.id = value
         elif name == 'groupName':
             self.name = value
+        elif name == 'vpcId':
+            self.vpc_id = value
         elif name == 'groupDescription':
             self.description = value
         elif name == 'ipRanges':
@@ -62,7 +74,7 @@ class SecurityGroup(EC2Object):
             else:
                 raise Exception(
                     'Unexpected value of status %s for group %s'%(
-                        value, 
+                        value,
                         self.name
                     )
                 )
@@ -74,6 +86,11 @@ class SecurityGroup(EC2Object):
 
     def add_rule(self, ip_protocol, from_port, to_port,
                  src_group_name, src_group_owner_id, cidr_ip):
+        """
+        Add a rule to the SecurityGroup object.  Note that this method
+        only changes the local version of the object.  No information
+        is sent to EC2.
+        """
         rule = IPPermissions(self)
         rule.ip_protocol = ip_protocol
         rule.from_port = from_port
@@ -83,6 +100,11 @@ class SecurityGroup(EC2Object):
 
     def remove_rule(self, ip_protocol, from_port, to_port,
                     src_group_name, src_group_owner_id, cidr_ip):
+        """
+        Remove a rule to the SecurityGroup object.  Note that this method
+        only changes the local version of the object.  No information
+        is sent to EC2.
+        """
         target_rule = None
         for rule in self.rules:
             if rule.ip_protocol == ip_protocol:
@@ -108,7 +130,7 @@ class SecurityGroup(EC2Object):
         OR ip_protocol, from_port, to_port,
         and cidr_ip.  In other words, either you are authorizing another
         group or you are authorizing some ip-based rule.
-        
+
         :type ip_protocol: string
         :param ip_protocol: Either tcp | udp | icmp
 
@@ -118,21 +140,19 @@ class SecurityGroup(EC2Object):
         :type to_port: int
         :param to_port: The ending port number you are enabling
 
-        :type to_port: string
-        :param to_port: The CIDR block you are providing access to.
+        :type cidr_ip: string or list of strings
+        :param cidr_ip: The CIDR block you are providing access to.
                         See http://en.wikipedia.org/wiki/Classless_Inter-Domain_Routing
 
         :type src_group: :class:`boto.ec2.securitygroup.SecurityGroup` or
                          :class:`boto.ec2.securitygroup.GroupOrCIDR`
-                         
+        :param src_group: The Security Group you are granting access to.
+
         :rtype: bool
         :return: True if successful.
         """
         if src_group:
-            from_port = None
-            to_port = None
             cidr_ip = None
-            ip_protocol = None
             src_group_name = src_group.name
             src_group_owner_id = src_group.owner_id
         else:
@@ -146,17 +166,18 @@ class SecurityGroup(EC2Object):
                                                           to_port,
                                                           cidr_ip)
         if status:
-            self.add_rule(ip_protocol, from_port, to_port, src_group_name,
-                          src_group_owner_id, cidr_ip)
+            if type(cidr_ip) != list:
+                cidr_ip = [cidr_ip]
+            for single_cidr_ip in cidr_ip:
+                self.add_rule(ip_protocol, from_port, to_port, src_group_name,
+                              src_group_owner_id, single_cidr_ip)
+
         return status
 
     def revoke(self, ip_protocol=None, from_port=None, to_port=None,
                cidr_ip=None, src_group=None):
         if src_group:
-            from_port=None
-            to_port=None
             cidr_ip=None
-            ip_protocol = None
             src_group_name = src_group.name
             src_group_owner_id = src_group.owner_id
         else:
@@ -187,7 +208,7 @@ class SecurityGroup(EC2Object):
         :type name: string
         :param name: The name of the copy.  If not supplied, the copy
                      will have the same name as this security group.
-        
+
         :rtype: :class:`boto.ec2.securitygroup.SecurityGroup`
         :return: The new security group.
         """
@@ -198,26 +219,46 @@ class SecurityGroup(EC2Object):
         sg = rconn.create_security_group(name or self.name, self.description)
         source_groups = []
         for rule in self.rules:
-            grant = rule.grants[0]
-            if grant.name:
-                if grant.name not in source_groups:
-                    source_groups.append(grant.name)
-                    sg.authorize(None, None, None, None, grant)
-            else:
-                sg.authorize(rule.ip_protocol, rule.from_port, rule.to_port,
-                             grant.cidr_ip)
+            for grant in rule.grants:
+                if grant.name:
+                    if grant.name not in source_groups:
+                        source_groups.append(grant.name)
+                        sg.authorize(None, None, None, None, grant)
+                else:
+                    sg.authorize(rule.ip_protocol, rule.from_port, rule.to_port,
+                                 grant.cidr_ip)
         return sg
 
     def instances(self):
+        """
+        Find all of the current instances that are running within this
+        security group.
+
+        :rtype: list of :class:`boto.ec2.instance.Instance`
+        :return: A list of Instance objects
+        """
+        # It would be more efficient to do this with filters now
+        # but not all services that implement EC2 API support filters.
         instances = []
         rs = self.connection.get_all_instances()
         for reservation in rs:
-            uses_group = [g.id for g in reservation.groups if g.id == self.name]
+            uses_group = [g.name for g in reservation.groups if g.name == self.name]
             if uses_group:
                 instances.extend(reservation.instances)
         return instances
 
-class IPPermissions:
+class IPPermissionsList(list):
+
+    def startElement(self, name, attrs, connection):
+        if name == 'item':
+            self.append(IPPermissions(self))
+            return self[-1]
+        return None
+
+    def endElement(self, name, value, connection):
+        pass
+
+class IPPermissions(object):
 
     def __init__(self, parent=None):
         self.parent = parent
@@ -254,7 +295,7 @@ class IPPermissions:
         self.grants.append(grant)
         return grant
 
-class GroupOrCIDR:
+class GroupOrCIDR(object):
 
     def __init__(self, parent=None):
         self.owner_id = None
@@ -279,4 +320,3 @@ class GroupOrCIDR:
             self.cidr_ip = value
         else:
             setattr(self, name, value)
-

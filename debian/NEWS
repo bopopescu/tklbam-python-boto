@@ -1,0 +1,19 @@
+python-boto (1.1c-1) unstable; urgency=low
+
+  Boto now defaults to using the virtual bucket hosting server API for
+  Amazon S3. A by-product of this is that bucket names must adhere to the
+  same rules as host names in DNS, most notably that they are treated as
+  case-insensitive. This means that it is impossible to access existing
+  buckets which have names containing upper-case characters without
+  resorting to the old-style calling format.
+  
+  You can enable the older calling format by passing an instance of
+  boto.s3.connection.OrdinaryCallingFormat when creating connection 
+  objects using the "calling_format" keyword. For example:
+
+    from boto.s3.connection import OrdinaryCallingFormat
+    from boto import connect_s3
+  
+    con = connect_s3(key, secret, calling_format=OrdinaryCallingFormat())
+
+ -- Eric Evans <eevans@debian.org>  Thu, 03 Apr 2008 11:19:38 -0500

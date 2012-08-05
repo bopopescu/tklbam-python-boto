@@ -41,7 +41,7 @@ Creating a Bucket
 
 Once you have a connection established with S3, you will probably want to
 create a bucket.  A bucket is a container used to store key/value pairs
-in S3.  A bucket can hold un unlimited about of data so you could potentially
+in S3.  A bucket can hold an unlimited amount of data so you could potentially
 have just one bucket in S3 for all of your information.  Or, you could create
 separate buckets for different types of data.  You can figure all of that out
 later, first let's just create a bucket.  That can be accomplished like this:
@@ -65,6 +65,30 @@ found an acceptable name.
 
 The create_bucket method will create the requested bucket if it does not
 exist or will return the existing bucket if it does exist.
+
+Creating a Bucket In Another Location
+-------------------------------------
+
+The example above assumes that you want to create a bucket in the
+standard US region.  However, it is possible to create buckets in
+other locations.  To do so, first import the Location object from the
+boto.s3.connection module, like this:
+
+>>> from boto.s3.connection import Location
+>>> dir(Location)
+['DEFAULT', 'EU', 'USWest', 'APSoutheast', '__doc__', '__module__']
+>>>
+
+As you can see, the Location object defines three possible locations;
+DEFAULT, EU, USWest, and APSoutheast.  By default, the location is the
+empty string which is interpreted as the US Classic Region, the
+original S3 region.  However, by specifying another location at the
+time the bucket is created, you can instruct S3 to create the bucket
+in that location.  For example:
+
+>>> conn.create_bucket('mybucket', location=Location.EU)
+
+will create the bucket in the EU region (assuming the name is available).
 
 Storing Data
 ----------------
@@ -149,11 +173,7 @@ S3.  There are two ways to set the ACL for an object:
    c. public-read-write: Owner gets FULL_CONTROL and the anonymous principal is granted READ and WRITE access.
    d. authenticated-read: Owner gets FULL_CONTROL and any principal authenticated as a registered Amazon S3 user is granted READ access.
 
-Currently, boto only supports the second method using canned access control
-policies.  A future version may allow setting of arbitrary ACL's if there
-is sufficient demand.
-
-To set the ACL for a bucket, use the set_acl method of the Bucket object.
+To set a canned ACL for a bucket, use the set_acl method of the Bucket object.
 The argument passed to this method must be one of the four permissable
 canned policies named in the list CannedACLStrings contained in acl.py.
 For example, to make a bucket readable by anyone:
@@ -182,12 +202,24 @@ by S3 and creates a set of Python objects that represent the ACL.
 >>> acp.acl.grants
 [<boto.acl.Grant instance at 0x2e6a08>]
 >>> for grant in acp.acl.grants:
-...   print grant.permission, grant.grantee
+...   print grant.permission, grant.display_name, grant.email_address, grant.id
 ... 
 FULL_CONTROL <boto.user.User instance at 0x2e6a30>
 
 The Python objects representing the ACL can be found in the acl.py module
 of boto.
+
+Both the Bucket object and the Key object also provide shortcut
+methods to simplify the process of granting individuals specific
+access.  For example, if you want to grant an individual user READ
+access to a particular object in S3 you could do the following:
+
+>>> key = b.lookup('mykeytoshare')
+>>> key.add_email_grant('READ', 'foo@bar.com')
+
+The email address provided should be the one associated with the users
+AWS account.  There is a similar method called add_user_grant that accepts the
+canonical id of the user rather than the email address.
 
 Setting/Getting Metadata Values on Key Objects
 ----------------------------------------------

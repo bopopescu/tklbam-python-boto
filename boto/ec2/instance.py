@@ -1,4 +1,5 @@
-# Copyright (c) 2006-2008 Mitch Garnaat http://garnaat.org/
+# Copyright (c) 2006-2010 Mitch Garnaat http://garnaat.org/
+# Copyright (c) 2010, Eucalyptus Systems, Inc.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the
@@ -23,14 +24,26 @@
 Represents an EC2 Instance
 """
 import boto
-from boto.ec2.ec2object import EC2Object
+from boto.ec2.ec2object import EC2Object, TaggedEC2Object
 from boto.resultset import ResultSet
 from boto.ec2.address import Address
 from boto.ec2.blockdevicemapping import BlockDeviceMapping
 from boto.ec2.image import ProductCodes
+from boto.ec2.networkinterface import NetworkInterface
+from boto.ec2.group import Group
 import base64
 
 class Reservation(EC2Object):
+    """
+    Represents a Reservation response object.
+
+    :ivar id: The unique ID of the Reservation.
+    :ivar owner_id: The unique ID of the owner of the Reservation.
+    :ivar groups: A list of Group objects representing the security
+                  groups associated with launched instances.
+    :ivar instances: A list of Instance objects launched in this
+                     Reservation.
+    """
     
     def __init__(self, connection=None):
         EC2Object.__init__(self, connection)
@@ -64,10 +77,48 @@ class Reservation(EC2Object):
         for instance in self.instances:
             instance.stop()
             
-class Instance(EC2Object):
+class Instance(TaggedEC2Object):
+    """
+    Represents an instance.
+
+    :ivar id: The unique ID of the Instance.
+    :ivar groups: A list of Group objects representing the security
+                  groups associated with the instance.
+    :ivar public_dns_name: The public dns name of the instance.
+    :ivar private_dns_name: The private dns name of the instance.
+    :ivar state: The string representation of the instances current state.
+    :ivar state_code: An integer representation of the instances current state.
+    :ivar key_name: The name of the SSH key associated with the instance.
+    :ivar instance_type: The type of instance (e.g. m1.small).
+    :ivar launch_time: The time the instance was launched.
+    :ivar image_id: The ID of the AMI used to launch this instance.
+    :ivar placement: The availability zone in which the instance is running.
+    :ivar kernel: The kernel associated with the instance.
+    :ivar ramdisk: The ramdisk associated with the instance.
+    :ivar architecture: The architecture of the image (i386|x86_64).
+    :ivar hypervisor: The hypervisor used.
+    :ivar virtualization_type: The type of virtualization used.
+    :ivar product_codes: A list of product codes associated with this instance.
+    :ivar ami_launch_index: This instances position within it's launch group.
+    :ivar monitored: A boolean indicating whether monitoring is enabled or not.
+    :ivar spot_instance_request_id: The ID of the spot instance request
+        if this is a spot instance.
+    :ivar subnet_id: The VPC Subnet ID, if running in VPC.
+    :ivar vpc_id: The VPC ID, if running in VPC.
+    :ivar private_ip_address: The private IP address of the instance.
+    :ivar ip_address: The public IP address of the instance.
+    :ivar platform: Platform of the instance (e.g. Windows)
+    :ivar root_device_name: The name of the root device.
+    :ivar root_device_type: The root device type (ebs|instance-store).
+    :ivar block_device_mapping: The Block Device Mapping for the instance.
+    :ivar state_reason: The reason for the most recent state transition.
+    :ivar groups: List of security Groups associated with the instance.
+    :ivar interfaces: List of Elastic Network Interfaces associated with
+        this instance.
+    """
     
     def __init__(self, connection=None):
-        EC2Object.__init__(self, connection)
+        TaggedEC2Object.__init__(self, connection)
         self.id = None
         self.dns_name = None
         self.public_dns_name = None
@@ -78,7 +129,6 @@ class Instance(EC2Object):
         self.shutdown_state = None
         self.previous_state = None
         self.instance_type = None
-        self.instance_class = None
         self.launch_time = None
         self.image_id = None
         self.placement = None
@@ -87,7 +137,6 @@ class Instance(EC2Object):
         self.product_codes = ProductCodes()
         self.ami_launch_index = None
         self.monitored = False
-        self.instance_class = None
         self.spot_instance_request_id = None
         self.subnet_id = None
         self.vpc_id = None
@@ -97,12 +146,26 @@ class Instance(EC2Object):
         self._in_monitoring_element = False
         self.persistent = False
         self.root_device_name = None
+        self.root_device_type = None
         self.block_device_mapping = None
+        self.state_reason = None
+        self.group_name = None
+        self.client_token = None
+        self.eventsSet = None
+        self.groups = []
+        self.platform = None
+        self.interfaces = []
+        self.hypervisor = None
+        self.virtualization_type = None
+        self.architecture = None
 
     def __repr__(self):
         return 'Instance:%s' % self.id
 
     def startElement(self, name, attrs, connection):
+        retval = TaggedEC2Object.startElement(self, name, attrs, connection)
+        if retval is not None:
+            return retval
         if name == 'monitoring':
             self._in_monitoring_element = True
         elif name == 'blockDeviceMapping':
@@ -110,6 +173,17 @@ class Instance(EC2Object):
             return self.block_device_mapping
         elif name == 'productCodes':
             return self.product_codes
+        elif name == 'stateReason':
+            self.state_reason = SubParse('stateReason')
+            return self.state_reason
+        elif name == 'groupSet':
+            self.groups = ResultSet([('item', Group)])
+            return self.groups
+        elif name == "eventsSet":
+            self.eventsSet = SubParse('eventsSet')
+            return self.eventsSet
+        elif name == 'networkInterfaceSet':
+            self.interfaces = ResultSet([('item', NetworkInterface)])
         return None
 
     def endElement(self, name, value, connection):
@@ -140,14 +214,16 @@ class Instance(EC2Object):
                 self.state_code = value
         elif name == 'instanceType':
             self.instance_type = value
-        elif name == 'instanceClass':
-            self.instance_class = value
         elif name == 'rootDeviceName':
             self.root_device_name = value
+        elif name == 'rootDeviceType':
+            self.root_device_type = value
         elif name == 'launchTime':
             self.launch_time = value
         elif name == 'availabilityZone':
             self.placement = value
+        elif name == 'platform':
+            self.platform = value
         elif name == 'placement':
             pass
         elif name == 'kernelId':
@@ -159,8 +235,6 @@ class Instance(EC2Object):
                 if value == 'enabled':
                     self.monitored = True
                 self._in_monitoring_element = False
-        elif name == 'instanceClass':
-            self.instance_class = value
         elif name == 'spotInstanceRequestId':
             self.spot_instance_request_id = value
         elif name == 'subnetId':
@@ -178,51 +252,87 @@ class Instance(EC2Object):
                 self.persistent = True
             else:
                 self.persistent = False
+        elif name == 'groupName':
+            if self._in_monitoring_element:
+                self.group_name = value
+        elif name == 'clientToken':
+            self.client_token = value
+        elif name == "eventsSet":
+            self.events = value
+        elif name == 'hypervisor':
+            self.hypervisor = value
+        elif name == 'virtualizationType':
+            self.virtualization_type = value
+        elif name == 'architecture':
+            self.architecture = value
         else:
             setattr(self, name, value)
 
     def _update(self, updated):
-        self.updated = updated
-        if hasattr(updated, 'dns_name'):
-            self.dns_name = updated.dns_name
-            self.public_dns_name = updated.dns_name
-        if hasattr(updated, 'private_dns_name'):
-            self.private_dns_name = updated.private_dns_name
-        if hasattr(updated, 'ami_launch_index'):
-            self.ami_launch_index = updated.ami_launch_index
-        self.shutdown_state = updated.shutdown_state
-        self.previous_state = updated.previous_state
-        if hasattr(updated, 'state'):
-            self.state = updated.state
-        else:
-            self.state = None
-        if hasattr(updated, 'state_code'):
-            self.state_code = updated.state_code
-        else:
-            self.state_code = None
+        self.__dict__.update(updated.__dict__)
 
-    def update(self):
+    def update(self, validate=False):
+        """
+        Update the instance's state information by making a call to fetch
+        the current instance attributes from the service.
+
+        :type validate: bool
+        :param validate: By default, if EC2 returns no data about the
+                         instance the update method returns quietly.  If
+                         the validate param is True, however, it will
+                         raise a ValueError exception if no data is
+                         returned from EC2.
+        """
         rs = self.connection.get_all_instances([self.id])
         if len(rs) > 0:
-            self._update(rs[0].instances[0])
+            r = rs[0]
+            for i in r.instances:
+                if i.id == self.id:
+                    self._update(i)
+        elif validate:
+            raise ValueError('%s is not a valid Instance ID' % self.id)
         return self.state
 
     def terminate(self):
+        """
+        Terminate the instance
+        """
         rs = self.connection.terminate_instances([self.id])
-        self._update(rs[0])
+        if len(rs) > 0:
+            self._update(rs[0])
 
-    def stop(self):
-        rs = self.connection.stop_instances([self.id])
-        self._update(rs[0])
+    def stop(self, force=False):
+        """
+        Stop the instance
+
+        :type force: bool
+        :param force: Forces the instance to stop
+        
+        :rtype: list
+        :return: A list of the instances stopped
+        """
+        rs = self.connection.stop_instances([self.id], force)
+        if len(rs) > 0:
+            self._update(rs[0])
 
     def start(self):
+        """
+        Start the instance.
+        """
         rs = self.connection.start_instances([self.id])
-        self._update(rs[0])
+        if len(rs) > 0:
+            self._update(rs[0])
 
     def reboot(self):
         return self.connection.reboot_instances([self.id])
 
     def get_console_output(self):
+        """
+        Retrieves the console output for the instance.
+
+        :rtype: :class:`boto.ec2.instance.ConsoleOutput`
+        :return: The console output as a ConsoleOutput object
+        """
         return self.connection.get_console_output(self.id)
 
     def confirm_product(self, product_code):
@@ -239,27 +349,68 @@ class Instance(EC2Object):
     def unmonitor(self):
         return self.connection.unmonitor_instance(self.id)
 
-class Group:
+    def get_attribute(self, attribute):
+        """
+        Gets an attribute from this instance.
 
-    def __init__(self, parent=None):
-        self.id = None
+        :type attribute: string
+        :param attribute: The attribute you need information about
+                          Valid choices are:
+                          instanceType|kernel|ramdisk|userData|
+                          disableApiTermination|
+                          instanceInitiatedShutdownBehavior|
+                          rootDeviceName|blockDeviceMapping
 
-    def startElement(self, name, attrs, connection):
-        return None
+        :rtype: :class:`boto.ec2.image.InstanceAttribute`
+        :return: An InstanceAttribute object representing the value of the
+                 attribute requested
+        """
+        return self.connection.get_instance_attribute(self.id, attribute)
 
-    def endElement(self, name, value, connection):
-        if name == 'groupId':
-            self.id = value
-        else:
-            setattr(self, name, value)
-    
+    def modify_attribute(self, attribute, value):
+        """
+        Changes an attribute of this instance
+
+        :type attribute: string
+        :param attribute: The attribute you wish to change.
+                          AttributeName - Expected value (default)
+                          instanceType - A valid instance type (m1.small)
+                          kernel - Kernel ID (None)
+                          ramdisk - Ramdisk ID (None)
+                          userData - Base64 encoded String (None)
+                          disableApiTermination - Boolean (true)
+                          instanceInitiatedShutdownBehavior - stop|terminate
+                          rootDeviceName - device name (None)
+
+        :type value: string
+        :param value: The new value for the attribute
+
+        :rtype: bool
+        :return: Whether the operation succeeded or not
+        """
+        return self.connection.modify_instance_attribute(self.id, attribute,
+                                                         value)
+
+    def reset_attribute(self, attribute):
+        """
+        Resets an attribute of this instance to its default value.
+
+        :type attribute: string
+        :param attribute: The attribute to reset. Valid values are:
+                          kernel|ramdisk
+
+        :rtype: bool
+        :return: Whether the operation succeeded or not
+        """
+        return self.connection.reset_instance_attribute(self.id, attribute)
+
 class ConsoleOutput:
 
     def __init__(self, parent=None):
         self.parent = parent
         self.instance_id = None
         self.timestamp = None
-        self.comment = None
+        self.output = None
 
     def startElement(self, name, attrs, connection):
         return None
@@ -267,6 +418,8 @@ class ConsoleOutput:
     def endElement(self, name, value, connection):
         if name == 'instanceId':
             self.instance_id = value
+        elif name == 'timestamp':
+            self.timestamp = value
         elif name == 'output':
             self.output = base64.b64decode(value)
         else:
@@ -274,15 +427,47 @@ class ConsoleOutput:
 
 class InstanceAttribute(dict):
 
+    ValidValues = ['instanceType', 'kernel', 'ramdisk', 'userData',
+                   'disableApiTermination', 'instanceInitiatedShutdownBehavior',
+                   'rootDeviceName', 'blockDeviceMapping', 'sourceDestCheck',
+                   'groupSet']
+
     def __init__(self, parent=None):
         dict.__init__(self)
+        self.instance_id = None
+        self.request_id = None
         self._current_value = None
+
+    def startElement(self, name, attrs, connection):
+        if name == 'blockDeviceMapping':
+            self[name] = BlockDeviceMapping()
+            return self[name]
+        elif name == 'groupSet':
+            self[name] = ResultSet([('item', Group)])
+            return self[name]
+        else:
+            return None
+
+    def endElement(self, name, value, connection):
+        if name == 'instanceId':
+            self.instance_id = value
+        elif name == 'requestId':
+            self.request_id = value
+        elif name == 'value':
+            self._current_value = value
+        elif name in self.ValidValues:
+            self[name] = self._current_value
+
+class SubParse(dict):
+
+    def __init__(self, section, parent=None):
+        dict.__init__(self)
+        self.section = section
 
     def startElement(self, name, attrs, connection):
         return None
 
     def endElement(self, name, value, connection):
-        if name == 'value':
-            self._current_value = value
-        else:
-            self[name] = self._current_value
+        if name != self.section:
+            self[name] = value
+            

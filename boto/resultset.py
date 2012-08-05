@@ -22,21 +22,24 @@
 class ResultSet(list):
     """
     The ResultSet is used to pass results back from the Amazon services
-    to the client.  It has an ugly but workable mechanism for parsing
-    the XML results from AWS.  Because I don't really want any dependencies
-    on external libraries, I'm using the standard SAX parser that comes
-    with Python.  The good news is that it's quite fast and efficient but
-    it makes some things rather difficult.
+    to the client. It is light wrapper around Python's :py:class:`list` class,
+    with some additional methods for parsing XML results from AWS. 
+    Because I don't really want any dependencies on external libraries, 
+    I'm using the standard SAX parser that comes with Python. The good news is 
+    that it's quite fast and efficient but it makes some things rather 
+    difficult.
 
     You can pass in, as the marker_elem parameter, a list of tuples.
     Each tuple contains a string as the first element which represents
     the XML element that the resultset needs to be on the lookout for
-    and a Python class as the second element of the tuple.  Each time the
+    and a Python class as the second element of the tuple. Each time the
     specified element is found in the XML, a new instance of the class
     will be created and popped onto the stack.
 
+    :ivar str next_token: A hash used to assist in paging through very long
+        result sets. In most cases, passing this value to certain methods
+        will give you another 'page' of results.
     """
-
     def __init__(self, marker_elem=None):
         list.__init__(self)
         if isinstance(marker_elem, list):
@@ -45,6 +48,9 @@ class ResultSet(list):
             self.markers = []
         self.marker = None
         self.key_marker = None
+        self.next_marker = None  # avail when delimiter used
+        self.next_key_marker = None
+        self.next_version_id_marker = None
         self.version_id_marker = None
         self.is_truncated = False
         self.next_token = None
@@ -71,8 +77,22 @@ class ResultSet(list):
             self.marker = value
         elif name == 'KeyMarker':
             self.key_marker = value
+        elif name == 'NextMarker':
+            self.next_marker = value
+        elif name == 'NextKeyMarker':
+            self.next_key_marker = value
         elif name == 'VersionIdMarker':
             self.version_id_marker = value
+        elif name == 'NextVersionIdMarker':
+            self.next_version_id_marker = value
+        elif name == 'UploadIdMarker':
+            self.upload_id_marker = value
+        elif name == 'NextUploadIdMarker':
+            self.next_upload_id_marker = value
+        elif name == 'Bucket':
+            self.bucket = value
+        elif name == 'MaxUploads':
+            self.max_uploads = int(value)
         elif name == 'Prefix':
             self.prefix = value
         elif name == 'return':

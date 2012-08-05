@@ -21,8 +21,8 @@
 #
 
 import xml.sax
-import base64
 import time
+import boto
 from boto.connection import AWSAuthConnection
 from boto import handler
 from boto.cloudfront.distribution import Distribution, DistributionSummary, DistributionConfig
@@ -30,13 +30,14 @@ from boto.cloudfront.distribution import StreamingDistribution, StreamingDistrib
 from boto.cloudfront.identity import OriginAccessIdentity
 from boto.cloudfront.identity import OriginAccessIdentitySummary
 from boto.cloudfront.identity import OriginAccessIdentityConfig
+from boto.cloudfront.invalidation import InvalidationBatch
 from boto.resultset import ResultSet
 from boto.cloudfront.exception import CloudFrontServerError
 
 class CloudFrontConnection(AWSAuthConnection):
 
     DefaultHost = 'cloudfront.amazonaws.com'
-    Version = '2009-12-01'
+    Version = '2010-11-01'
 
     def __init__(self, aws_access_key_id=None, aws_secret_access_key=None,
                  port=None, proxy=None, proxy_port=None,
@@ -52,15 +53,8 @@ class CloudFrontConnection(AWSAuthConnection):
                 return response_headers[key]
         return None
 
-    def add_aws_auth_header(self, headers, method, path):
-        if not headers.has_key('Date'):
-            headers['Date'] = time.strftime("%a, %d %b %Y %H:%M:%S GMT",
-                                            time.gmtime())
-
-        hmac = self.hmac.copy()
-        hmac.update(headers['Date'])
-        b64_hmac = base64.encodestring(hmac.digest()).strip()
-        headers['Authorization'] = "AWS %s:%s" % (self.aws_access_key_id, b64_hmac)
+    def _required_auth_capability(self):
+        return ['cloudfront']
 
     # Generics
     
@@ -69,6 +63,7 @@ class CloudFrontConnection(AWSAuthConnection):
             tags=[('DistributionSummary', DistributionSummary)]
         response = self.make_request('GET', '/%s/%s' % (self.Version, resource))
         body = response.read()
+        boto.log.debug(body)
         if response.status >= 300:
             raise CloudFrontServerError(response.status, response.reason, body)
         rs = ResultSet(tags)
@@ -80,6 +75,7 @@ class CloudFrontConnection(AWSAuthConnection):
         uri = '/%s/%s/%s' % (self.Version, resource, id)
         response = self.make_request('GET', uri)
         body = response.read()
+        boto.log.debug(body)
         if response.status >= 300:
             raise CloudFrontServerError(response.status, response.reason, body)
         d = dist_class(connection=self)
@@ -95,6 +91,7 @@ class CloudFrontConnection(AWSAuthConnection):
         uri = '/%s/%s/%s/config' % (self.Version, resource, id)
         response = self.make_request('GET', uri)
         body = response.read()
+        boto.log.debug(body)
         if response.status >= 300:
             raise CloudFrontServerError(response.status, response.reason, body)
         d = config_class(connection=self)
@@ -112,18 +109,21 @@ class CloudFrontConnection(AWSAuthConnection):
         headers = {'If-Match' : etag, 'Content-Type' : 'text/xml'}
         response = self.make_request('PUT', uri, headers, config.to_xml())
         body = response.read()
-        return self.get_etag(response)
+        boto.log.debug(body)
         if response.status != 200:
             raise CloudFrontServerError(response.status, response.reason, body)
+        return self.get_etag(response)
     
     def _create_object(self, config, resource, dist_class):
         response = self.make_request('POST', '/%s/%s' % (self.Version, resource),
                                      {'Content-Type' : 'text/xml'}, data=config.to_xml())
         body = response.read()
+        boto.log.debug(body)
         if response.status == 201:
             d = dist_class(connection=self)
             h = handler.XmlHandler(d, self)
             xml.sax.parseString(body, h)
+            d.etag = self.get_etag(response)
             return d
         else:
             raise CloudFrontServerError(response.status, response.reason, body)
@@ -132,6 +132,7 @@ class CloudFrontConnection(AWSAuthConnection):
         uri = '/%s/%s/%s' % (self.Version, resource, id)
         response = self.make_request('DELETE', uri, {'If-Match' : etag})
         body = response.read()
+        boto.log.debug(body)
         if response.status != 204:
             raise CloudFrontServerError(response.status, response.reason, body)
 
@@ -152,10 +153,11 @@ class CloudFrontConnection(AWSAuthConnection):
         return self._set_config(distribution_id, etag, config)
     
     def create_distribution(self, origin, enabled, caller_reference='',
-                            cnames=None, comment=''):
+                            cnames=None, comment='', trusted_signers=None):
         config = DistributionConfig(origin=origin, enabled=enabled,
                                     caller_reference=caller_reference,
-                                    cnames=cnames, comment=comment)
+                                    cnames=cnames, comment=comment,
+                                    trusted_signers=trusted_signers)
         return self._create_object(config, 'distribution', Distribution)
         
     def delete_distribution(self, distribution_id, etag):
@@ -180,10 +182,12 @@ class CloudFrontConnection(AWSAuthConnection):
     
     def create_streaming_distribution(self, origin, enabled,
                                       caller_reference='',
-                                      cnames=None, comment=''):
+                                      cnames=None, comment='',
+                                      trusted_signers=None):
         config = StreamingDistributionConfig(origin=origin, enabled=enabled,
                                              caller_reference=caller_reference,
-                                             cnames=cnames, comment=comment)
+                                             cnames=cnames, comment=comment,
+                                             trusted_signers=trusted_signers)
         return self._create_object(config, 'streaming-distribution',
                                    StreamingDistribution)
         
@@ -219,5 +223,42 @@ class CloudFrontConnection(AWSAuthConnection):
     def delete_origin_access_identity(self, access_id, etag):
         return self._delete_object(access_id, etag,
                                    'origin-access-identity/cloudfront')
+
+    # Object Invalidation
+    
+    def create_invalidation_request(self, distribution_id, paths,
+                                    caller_reference=None):
+        """Creates a new invalidation request
+            :see: http://goo.gl/8vECq
+        """
+        # We allow you to pass in either an array or
+        # an InvalidationBatch object
+        if not isinstance(paths, InvalidationBatch):
+            paths = InvalidationBatch(paths)
+        paths.connection = self
+        uri = '/%s/distribution/%s/invalidation' % (self.Version,
+                                                    distribution_id)
+        response = self.make_request('POST', uri,
+                                     {'Content-Type' : 'text/xml'},
+                                     data=paths.to_xml())
+        body = response.read()
+        if response.status == 201:
+            h = handler.XmlHandler(paths, self)
+            xml.sax.parseString(body, h)
+            return paths
+        else:
+            raise CloudFrontServerError(response.status, response.reason, body)
+
+    def invalidation_request_status (self, distribution_id, request_id, caller_reference=None):
+        uri = '/%s/distribution/%s/invalidation/%s' % (self.Version, distribution_id, request_id )
+        response = self.make_request('GET', uri, {'Content-Type' : 'text/xml'})
+        body = response.read()
+        if response.status == 200:
+            paths = InvalidationBatch([])
+            h = handler.XmlHandler(paths, self)
+            xml.sax.parseString(body, h)
+            return paths
+        else:
+            raise CloudFrontServerError(response.status, response.reason, body)
 
 

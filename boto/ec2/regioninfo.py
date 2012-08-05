@@ -1,4 +1,6 @@
-# Copyright (c) 2006-2008 Mitch Garnaat http://garnaat.org/
+# Copyright (c) 2006-2010 Mitch Garnaat http://garnaat.org/
+# Copyright (c) 2010, Eucalyptus Systems, Inc.
+# All rights reserved.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the
@@ -19,42 +21,14 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
 
-class RegionInfo(object):
+from boto.regioninfo import RegionInfo
+
+class EC2RegionInfo(RegionInfo):
     """
     Represents an EC2 Region
     """
     
     def __init__(self, connection=None, name=None, endpoint=None):
-        self.connection = connection
-        self.name = name
-        self.endpoint = endpoint
-
-    def __repr__(self):
-        return 'RegionInfo:%s' % self.name
-
-    def startElement(self, name, attrs, connection):
-        return None
-
-    def endElement(self, name, value, connection):
-        if name == 'regionName':
-            self.name = value
-        elif name == 'regionEndpoint':
-            self.endpoint = value
-        else:
-            setattr(self, name, value)
-
-    def connect(self, **kw_params):
-        """
-        Connect to this Region's endpoint. Returns an EC2Connection
-        object pointing to the endpoint associated with this region.
-        You may pass any of the arguments accepted by the EC2Connection
-        object's constructor as keyword arguments and they will be
-        passed along to the EC2Connection object.
-        
-        :rtype: :class:`boto.ec2.connection.EC2Connection`
-        :return: The connection to this regions endpoint
-        """
         from boto.ec2.connection import EC2Connection
-        return EC2Connection(region=self, **kw_params)
-
-
+        RegionInfo.__init__(self, connection, name, endpoint,
+                            EC2Connection)

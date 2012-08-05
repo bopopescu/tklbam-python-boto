@@ -1,0 +1,133 @@
+python-boto (2.3.0-1) unstable; urgency=low
+
+  * New upstream release (Closes: #664478)
+  * Update debian/watch for Boto's move to Github.  Thanks Scott
+    Moser. (Closes: #650480)
+
+ -- Eric Evans <eevans@debian.org>  Sun, 15 Apr 2012 20:21:21 -0500
+
+python-boto (2.0-2) unstable; urgency=low
+
+  * Promote new upstream to unstable (Closes: #638931).
+
+ -- Eric Evans <eevans@debian.org>  Sun, 13 Nov 2011 11:58:40 -0800
+
+python-boto (2.0-1) experimental; urgency=low
+
+  * New upstream release.
+
+ -- Eric Evans <eevans@debian.org>  Sun, 16 Oct 2011 17:22:44 -0500
+
+python-boto (1.9b-6) unstable; urgency=low
+
+  * Convert packaging to dh_python2 (Closes: #631430).
+
+ -- Eric Evans <eevans@debian.org>  Sat, 30 Jul 2011 19:43:19 +0200
+
+python-boto (1.9b-5) unstable; urgency=low
+
+  * Updated to Debian Policy version 3.9.2.
+  * Patched to include Python 2.7 in httplib work-around for https
+    signatures.  Thanks Matthias Klose.  (Closes: #607120)
+
+ -- Eric Evans <eevans@debian.org>  Sun, 03 Jul 2011 16:04:44 -0500
+
+python-boto (1.9b-4) unstable; urgency=low
+
+  * Do not require Name param on RegisterImage (Closes: #591466).
+
+ -- Eric Evans <eevans@debian.org>  Tue, 03 Aug 2010 11:41:59 -0400
+
+python-boto (1.9b-3) unstable; urgency=low
+
+  * Strings exceptions are not allowed in Python 2.6 (Closes: #585284).
+
+ -- Eric Evans <eevans@debian.org>  Wed, 07 Jul 2010 19:36:13 +0000
+
+python-boto (1.9b-2) unstable; urgency=low
+
+  * Depend on versions of Python >= 2.5 (Closes: #563439).
+
+ -- Eric Evans <eevans@debian.org>  Wed, 06 Jan 2010 12:20:56 -0600
+
+python-boto (1.9b-1) unstable; urgency=low
+
+  * New upstream version.
+
+ -- Eric Evans <eevans@debian.org>  Thu, 24 Dec 2009 13:27:40 -0600
+
+python-boto (1.8d-1) unstable; urgency=low
+
+  * New Upstream Version (Closes: #536194).
+
+ -- Eric Evans <eevans@debian.org>  Wed, 08 Jul 2009 11:29:47 -0500
+
+python-boto (1.8c-1) unstable; urgency=low
+
+  * New Upstream Version (Closes: #534537).
+
+ -- Eric Evans <eevans@debian.org>  Sun, 28 Jun 2009 13:43:25 -0500
+
+python-boto (1.7a-2) unstable; urgency=low
+
+  * Patched test file to restore compatibility with python 2.4,
+    (Closes: #525365).
+
+ -- Eric Evans <eevans@debian.org>  Tue, 28 Apr 2009 21:11:20 -0500
+
+python-boto (1.7a-1) unstable; urgency=low
+
+  * New Upstream Version (Closes: #524931).
+
+ -- Eric Evans <eevans@debian.org>  Wed, 22 Apr 2009 20:50:03 -0500
+
+python-boto (1.6b-1) unstable; urgency=low
+
+  * New Upstream Version
+
+ -- Eric Evans <eevans@debian.org>  Tue, 30 Dec 2008 16:13:24 -0600
+
+python-boto (1.4c-1) unstable; urgency=low
+
+  * New Upstream Version
+
+ -- Eric Evans <eevans@debian.org>  Wed, 01 Oct 2008 20:47:21 -0500
+
+python-boto (1.2a-1) unstable; urgency=low
+
+  * New Upstream Version
+
+ -- Eric Evans <eevans@debian.org>  Sun, 20 Apr 2008 04:41:52 +0000
+
+python-boto (1.1c-1) unstable; urgency=low
+
+  * New upstream release (Closes: #461148).
+  * Patched boto/s3/connection.py to provide a means of restoring
+    the older calling convention for buckets.
+
+ -- Eric Evans <eevans@debian.org>  Thu, 03 Apr 2008 16:14:29 -0500
+
+python-boto (1.0a-1) unstable; urgency=low
+
+  * New upstream release.
+
+ -- Eric Evans <eevans@debian.org>  Thu, 10 Jan 2008 12:57:42 -0600
+
+python-boto (0.9d-1) unstable; urgency=low
+
+  * New upstream release.
+
+ -- Eric Evans <eevans@debian.org>  Sat, 24 Nov 2007 17:12:40 -0600
+
+python-boto (0.9b-1) unstable; urgency=low
+
+  * New upstream release.
+  * Move tests to /usr/share/doc/python-boto/examples, (Closes: #433373).
+
+ -- Eric Evans <eevans@debian.org>  Mon, 16 Jul 2007 17:17:48 -0500
+
+python-boto (0.9a-1) unstable; urgency=low
+
+  * Initial release. (Closes: #431626)
+
+ -- Eric Evans <eevans@debian.org>  Wed, 04 Jul 2007 17:23:42 -0500

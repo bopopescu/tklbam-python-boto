@@ -31,7 +31,7 @@ def bucket_lister(bucket, prefix='', delimiter='', marker='', headers=None):
         for k in rs:
             yield k
         if k:
-            marker = k.name
+            marker = rs.next_marker or k.name
         more_results= rs.is_truncated
         
 class BucketListResultSet:
@@ -52,7 +52,8 @@ class BucketListResultSet:
 
     def __iter__(self):
         return bucket_lister(self.bucket, prefix=self.prefix,
-                             delimiter=self.delimiter, marker=self.marker, headers=self.headers)
+                             delimiter=self.delimiter, marker=self.marker,
+                             headers=self.headers)
 
 def versioned_bucket_lister(bucket, prefix='', delimiter='',
                             key_marker='', version_id_marker='', headers=None):
@@ -64,11 +65,12 @@ def versioned_bucket_lister(bucket, prefix='', delimiter='',
     while more_results:
         rs = bucket.get_all_versions(prefix=prefix, key_marker=key_marker,
                                      version_id_marker=version_id_marker,
-                                     delimiter=delimiter, headers=headers)
+                                     delimiter=delimiter, headers=headers,
+                                     max_keys=999)
         for k in rs:
             yield k
-        key_marker = rs.key_marker
-        version_id_marker = rs.version_id_marker
+        key_marker = rs.next_key_marker
+        version_id_marker = rs.next_version_id_marker
         more_results= rs.is_truncated
         
 class VersionedBucketListResultSet:
@@ -94,6 +96,46 @@ class VersionedBucketListResultSet:
                                        delimiter=self.delimiter,
                                        key_marker=self.key_marker,
                                        version_id_marker=self.version_id_marker,
+                                       headers=self.headers)
+
+def multipart_upload_lister(bucket, key_marker='',
+                            upload_id_marker='',
+                            headers=None):
+    """
+    A generator function for listing multipart uploads in a bucket.
+    """
+    more_results = True
+    k = None
+    while more_results:
+        rs = bucket.get_all_multipart_uploads(key_marker=key_marker,
+                                              upload_id_marker=upload_id_marker,
+                                              headers=headers)
+        for k in rs:
+            yield k
+        key_marker = rs.next_key_marker
+        upload_id_marker = rs.next_upload_id_marker
+        more_results= rs.is_truncated
+        
+class MultiPartUploadListResultSet:
+    """
+    A resultset for listing multipart uploads within a bucket.
+    Uses the multipart_upload_lister generator function and
+    implements the iterator interface.  This
+    transparently handles the results paging from S3 so even if you have
+    many thousands of uploads within the bucket you can iterate over all
+    keys in a reasonably efficient manner.
+    """
+    def __init__(self, bucket=None, key_marker='',
+                 upload_id_marker='', headers=None):
+        self.bucket = bucket
+        self.key_marker = key_marker
+        self.upload_id_marker = upload_id_marker
+        self.headers = headers
+
+    def __iter__(self):
+        return multipart_upload_lister(self.bucket,
+                                       key_marker=self.key_marker,
+                                       upload_id_marker=self.upload_id_marker,
                                        headers=self.headers)
 
     

@@ -55,6 +55,7 @@ class ModelMeta(type):
         
 class Model(object):
     __metaclass__ = ModelMeta
+    __consistent__ = False # Consistent is set off by default
     id = None
 
     @classmethod
@@ -93,10 +94,6 @@ class Model(object):
         for key, value in params.items():
             q.filter('%s =' % key, value)
         return q
-
-    @classmethod
-    def lookup(cls, name, value):
-        return cls._manager.lookup(cls, name, value)
 
     @classmethod
     def all(cls, limit=None, next_token=None):
@@ -151,9 +148,12 @@ class Model(object):
 
     def __init__(self, id=None, **kw):
         self._loaded = False
-        # first initialize all properties to their default values
+        # first try to initialize all properties to their default values
         for prop in self.properties(hidden=False):
-            setattr(self, prop.name, prop.default_value())
+            try:
+                setattr(self, prop.name, prop.default_value())
+            except ValueError:
+                pass
         if kw.has_key('manager'):
             self._manager = kw['manager']
         self.id = id
@@ -182,10 +182,61 @@ class Model(object):
         if self.id and not self._loaded:
             self._manager.load_object(self)
 
-    def put(self):
-        self._manager.save_object(self)
+    def reload(self):
+        if self.id:
+            self._loaded = False
+            self._manager.load_object(self)
+
+    def put(self, expected_value=None):
+        """
+        Save this object as it is, with an optional expected value
+
+        :param expected_value: Optional tuple of Attribute, and Value that 
+            must be the same in order to save this object. If this 
+            condition is not met, an SDBResponseError will be raised with a
+            Confict status code.
+        :type expected_value: tuple or list
+        :return: This object
+        :rtype: :class:`boto.sdb.db.model.Model`
+        """
+        self._manager.save_object(self, expected_value)
+        return self
 
     save = put
+
+    def put_attributes(self, attrs):
+        """
+        Save just these few attributes, not the whole object
+
+        :param attrs: Attributes to save, key->value dict
+        :type attrs: dict
+        :return: self
+        :rtype: :class:`boto.sdb.db.model.Model`
+        """
+        assert(isinstance(attrs, dict)), "Argument must be a dict of key->values to save"
+        for prop_name in attrs:
+            value = attrs[prop_name]
+            prop = self.find_property(prop_name)
+            assert(prop), "Property not found: %s" % prop_name
+            self._manager.set_property(prop, self, prop_name, value)
+        self.reload()
+        return self
+
+    def delete_attributes(self, attrs):
+        """
+        Delete just these attributes, not the whole object.
+
+        :param attrs: Attributes to save, as a list of string names
+        :type attrs: list
+        :return: self
+        :rtype: :class:`boto.sdb.db.model.Model`
+        """
+        assert(isinstance(attrs, list)), "Argument must be a list of names of keys to delete."
+        self._manager.domain.delete_attributes(self.id, attrs)
+        self.reload()
+        return self
+
+    save_attributes = put_attributes
         
     def delete(self):
         self._manager.delete_object(self)
@@ -208,6 +259,16 @@ class Model(object):
         xmlmanager = self.get_xmlmanager()
         doc = xmlmanager.marshal_object(self, doc)
         return doc
+
+    @classmethod
+    def find_subclass(cls, name):
+        """Find a subclass with a given name"""
+        if name == cls.__name__:
+            return cls
+        for sc in cls.__sub_classes__:
+            r = sc.find_subclass(name)
+            if r != None:
+                return r
 
 class Expando(Model):
 

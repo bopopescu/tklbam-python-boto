@@ -33,6 +33,8 @@ Commands:
     remove|rm <name> <instance>       Remove <instance> from ELB <name>
     enable|en <name> <zone>           Enable Zone <zone> for ELB <name>
     disable   <name> <zone>           Disable Zone <zone> for ELB <name>
+    addl      <name>                  Add listeners (specified by -l) to the ELB <name>
+    rml       <name> <port>           Remove Listener(s) specified by the port on the ELB
 """
 
 def list(elb):
@@ -44,45 +46,48 @@ def list(elb):
 
 def get(elb, name):
     """Get details about ELB <name>"""
-    b = elb.get_all_load_balancers(name)
-    if len(b) < 1:
+    elbs = elb.get_all_load_balancers(name)
+    if len(elbs) < 1:
         print "No load balancer by the name of %s found" % name
         return
-    b = b[0]
+    for b in elbs:
+        if name in b.name:
+            print "="*80
+            print "Name: %s" % b.name
+            print "DNS Name: %s" % b.dns_name
 
-    print "Name: %s" % b.name
-    print "DNS Name: %s" % b.dns_name
+            print
 
-    print
+            print "Listeners"
+            print "---------"
+            print "%-8s %-8s %s" % ("IN", "OUT", "PROTO")
+            for l in b.listeners:
+                print "%-8s %-8s %s" % (l[0], l[1], l[2])
 
-    print "Listeners"
-    print "---------"
-    print "%-8s %-8s %s" % ("IN", "OUT", "PROTO")
-    for l in b.listeners:
-        print "%-8s %-8s %s" % (l[0], l[1], l[2])
+            print
 
-    print
+            print "  Zones  "
+            print "---------"
+            for z in b.availability_zones:
+                print z
 
-    print "  Zones  "
-    print "---------"
-    for z in b.availability_zones:
-        print z
+            print
 
-    print
+            print "Instances"
+            print "---------"
+            for i in b.instances:
+                print i.id
 
-    print "Instances"
-    print "---------"
-    for i in b.instances:
-        print i.id
-
-    print
+            print
 
 def create(elb, name, zones, listeners):
     """Create an ELB named <name>"""
     l_list = []
     for l in listeners:
         l = l.split(",")
-        l_list.append((int(l[0]), int(l[1]), l[2]))
+        if l[2]=='HTTPS':
+            l_list.append((int(l[0]), int(l[1]), l[2], l[3]))
+        else : l_list.append((int(l[0]), int(l[1]), l[2]))
     
     b = elb.create_load_balancer(name, zones, l_list)
     return get(elb, name)
@@ -93,8 +98,9 @@ def delete(elb, name):
     if len(b) < 1:
         print "No load balancer by the name of %s found" % name
         return
-    b = b[0]
-    b.delete()
+    for i in b:
+        if name in i.name:
+            i.delete()
     print "Load Balancer %s deleted" % name
 
 def add_instance(elb, name, instance):
@@ -103,8 +109,9 @@ def add_instance(elb, name, instance):
     if len(b) < 1:
         print "No load balancer by the name of %s found" % name
         return
-    b = b[0]
-    b.register_instances([instance])
+    for i in b:
+        if name in i.name:
+            i.register_instances([instance])
     return get(elb, name)
 
 
@@ -114,8 +121,9 @@ def remove_instance(elb, name, instance):
     if len(b) < 1:
         print "No load balancer by the name of %s found" % name
         return
-    b = b[0]
-    b.deregister_instances([instance])
+    for i in b:
+        if name in i.name:
+            i.deregister_instances([instance])
     return get(elb, name)
 
 def enable_zone(elb, name, zone):
@@ -137,6 +145,31 @@ def disable_zone(elb, name, zone):
     b = b[0]
     b.disable_zones([zone])
     return get(elb, name)
+
+def add_listener(elb, name, listeners):
+    """Add listeners to a given load balancer"""
+    l_list = []
+    for l in listeners:
+        l = l.split(",")
+        l_list.append((int(l[0]), int(l[1]), l[2]))
+    b = elb.get_all_load_balancers(name)
+    if len(b) < 1:
+        print "No load balancer by the name of %s found" % name
+        return
+    b = b[0]
+    b.create_listeners(l_list)
+    return get(elb, name)
+
+def rm_listener(elb, name, ports):
+    """Remove listeners from a given load balancer"""
+    b = elb.get_all_load_balancers(name)
+    if len(b) < 1:
+        print "No load balancer by the name of %s found" % name
+        return
+    b = b[0]
+    b.delete_listeners(ports)
+    return get(elb, name)
+
 
 
 
@@ -160,6 +193,9 @@ if __name__ == "__main__":
         sys.exit(1)
 
     elb = boto.connect_elb()
+
+    print "%s" % (elb.region.endpoint)
+
     command = args[0].lower()
     if command in ("ls", "list"):
         list(elb)
@@ -177,3 +213,7 @@ if __name__ == "__main__":
         enable_zone(elb, args[1], args[2])
     elif command == "disable":
         disable_zone(elb, args[1], args[2])
+    elif command == "addl":
+        add_listener(elb, args[1], options.listeners)
+    elif command == "rml":
+        rm_listener(elb, args[1], args[2:])

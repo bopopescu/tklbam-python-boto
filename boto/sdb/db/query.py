@@ -24,11 +24,13 @@ class Query(object):
     def __init__(self, model_class, limit=None, next_token=None, manager=None):
         self.model_class = model_class
         self.limit = limit
+        self.offset = 0
         if manager:
             self.manager = manager
         else:
             self.manager = self.model_class._manager
         self.filters = []
+        self.select = None
         self.sort_by = None
         self.rs = None
         self.next_token = next_token
@@ -46,10 +48,17 @@ class Query(object):
         return self
 
     def fetch(self, limit, offset=0):
-        raise NotImplementedError, "fetch mode is not currently supported"
+        """Not currently fully supported, but we can use this
+        to allow them to set a limit in a chainable method"""
+        self.limit = limit
+        self.offset = offset
+        return self
 
-    def count(self):
-        return self.manager.count(self.model_class, self.filters)
+    def count(self, quick=True):
+        return self.manager.count(self.model_class, self.filters, quick, self.sort_by, self.select)
+
+    def get_query(self):
+        return self.manager._build_filter_part(self.model_class, self.filters, self.sort_by, self.select)
 
     def order(self, key):
         self.sort_by = key

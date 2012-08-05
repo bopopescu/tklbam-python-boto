@@ -24,6 +24,7 @@ import boto
 from boto.utils import get_instance_metadata, get_instance_userdata
 from boto.pyami.config import Config, BotoConfigPath
 from boto.pyami.scriptbase import ScriptBase
+import time
 
 class Bootstrap(ScriptBase):
     """
@@ -73,6 +74,22 @@ class Bootstrap(ScriptBase):
                 version = '-rHEAD'
             location = boto.config.get('Boto', 'boto_location', '/usr/local/boto')
             self.run('svn update %s %s' % (version, location))
+        elif update.startswith('git'):
+            location = boto.config.get('Boto', 'boto_location', '/usr/share/python-support/python-boto/boto')
+            num_remaining_attempts = 10
+            while num_remaining_attempts > 0:
+                num_remaining_attempts -= 1
+                try:
+                    self.run('git pull', cwd=location)
+                    num_remaining_attempts = 0
+                except Exception, e:
+                    boto.log.info('git pull attempt failed with the following exception. Trying again in a bit. %s', e)
+                    time.sleep(2)
+            if update.find(':') >= 0:
+                method, version = update.split(':')
+            else:
+                version = 'master'
+            self.run('git checkout %s' % version, cwd=location)
         else:
             # first remove the symlink needed when running from subversion
             self.run('rm /usr/local/lib/python2.5/site-packages/boto')
@@ -80,14 +97,10 @@ class Bootstrap(ScriptBase):
 
     def fetch_s3_file(self, s3_file):
         try:
-            if s3_file.startswith('s3:'):
-                bucket_name, key_name = s3_file[len('s3:'):].split('/')
-                c = boto.connect_s3()
-                bucket = c.get_bucket(bucket_name)
-                key = bucket.get_key(key_name)
-                boto.log.info('Fetching %s/%s' % (bucket.name, key.name))
-                path = os.path.join(self.working_dir, key.name)
-                key.get_contents_to_filename(path)
+            from boto.utils import fetch_file
+            f = fetch_file(s3_file)
+            path = os.path.join(self.working_dir, s3_file.split("/")[-1])
+            open(path, "w").write(f.read())
         except:
             boto.log.exception('Problem Retrieving file: %s' % s3_file)
             path = None

@@ -22,10 +22,10 @@
 """
 Represents an SDB Domain
 """
-from boto.sdb.queryresultset import QueryResultSet, SelectResultSet
+from boto.sdb.queryresultset import SelectResultSet
 
 class Domain:
-    
+
     def __init__(self, connection=None, name=None):
         self.connection = connection
         self.name = name
@@ -50,8 +50,9 @@ class Domain:
         if not self._metadata:
             self._metadata = self.connection.domain_metadata(self)
         return self._metadata
-    
-    def put_attributes(self, item_name, attributes, replace=True):
+
+    def put_attributes(self, item_name, attributes,
+                       replace=True, expected_value=None):
         """
         Store attributes for a given item.
 
@@ -61,6 +62,23 @@ class Domain:
         :type attribute_names: dict or dict-like object
         :param attribute_names: The name/value pairs to store as attributes
 
+        :type expected_value: list
+        :param expected_value: If supplied, this is a list or tuple consisting
+            of a single attribute name and expected value. The list can be 
+            of the form:
+
+             * ['name', 'value']
+
+            In which case the call will first verify that the attribute 
+            "name" of this item has a value of "value".  If it does, the delete
+            will proceed, otherwise a ConditionalCheckFailed error will be 
+            returned. The list can also be of the form:
+            
+             * ['name', True|False]
+            
+            which will simply check for the existence (True) or non-existence 
+            (False) of the attribute.
+
         :type replace: bool
         :param replace: Whether the attribute values passed in will replace
                         existing values or will be added as addition values.
@@ -69,7 +87,8 @@ class Domain:
         :rtype: bool
         :return: True if successful
         """
-        return self.connection.put_attributes(self, item_name, attributes, replace)
+        return self.connection.put_attributes(self, item_name, attributes,
+                                              replace, expected_value)
 
     def batch_put_attributes(self, items, replace=True):
         """
@@ -92,7 +111,8 @@ class Domain:
         """
         return self.connection.batch_put_attributes(self, items, replace)
 
-    def get_attributes(self, item_name, attribute_name=None, item=None):
+    def get_attributes(self, item_name, attribute_name=None,
+                       consistent_read=False, item=None):
         """
         Retrieve attributes for a given item.
 
@@ -107,9 +127,11 @@ class Domain:
         :rtype: :class:`boto.sdb.item.Item`
         :return: An Item mapping type containing the requested attribute name/values
         """
-        return self.connection.get_attributes(self, item_name, attribute_name, item)
+        return self.connection.get_attributes(self, item_name, attribute_name,
+                                              consistent_read, item)
 
-    def delete_attributes(self, item_name, attributes=None):
+    def delete_attributes(self, item_name, attributes=None,
+                          expected_values=None):
         """
         Delete attributes from a given item.
 
@@ -123,36 +145,51 @@ class Domain:
                            of values to delete as the value.  If no value is supplied,
                            all attribute name/values for the item will be deleted.
                            
+        :type expected_value: list
+        :param expected_value: If supplied, this is a list or tuple consisting
+            of a single attribute name and expected value. The list can be of 
+            the form:
+
+             * ['name', 'value']
+
+            In which case the call will first verify that the attribute "name"
+            of this item has a value of "value".  If it does, the delete
+            will proceed, otherwise a ConditionalCheckFailed error will be 
+            returned. The list can also be of the form:
+
+             * ['name', True|False]
+
+            which will simply check for the existence (True) or 
+            non-existence (False) of the attribute.
+
         :rtype: bool
         :return: True if successful
         """
-        return self.connection.delete_attributes(self, item_name, attributes)
+        return self.connection.delete_attributes(self, item_name, attributes,
+                                                 expected_values)
 
-    def query(self, query='', max_items=None, attr_names=None):
+    def batch_delete_attributes(self, items):
         """
-        Returns a list of items within domain that match the query.
+        Delete multiple items in this domain.
         
-        :type query: string
-        :param query: The SimpleDB query to be performed.
+        :type items: dict or dict-like object
+        :param items: A dictionary-like object.  The keys of the dictionary are
+            the item names and the values are either:
 
-        :type max_items: int
-        :param max_items: The maximum number of items to return.  If not
-                          supplied, the default is None which returns all
-                          items matching the query.
+                * dictionaries of attribute names/values, exactly the
+                  same as the attribute_names parameter of the scalar
+                  put_attributes call.  The attribute name/value pairs
+                  will only be deleted if they match the name/value
+                  pairs passed in.
+                * None which means that all attributes associated
+                  with the item should be deleted.  
 
-        :type attr_names: list
-        :param attr_names: Either None, meaning return all attributes
-                           or a list of attribute names which means to return
-                           only those attributes.
-
-        :rtype: iter
-        :return: An iterator containing the results.  This is actually a generator
-                 function that will iterate across all search results, not just the
-                 first page.
+        :rtype: bool
+        :return: True if successful
         """
-        return iter(QueryResultSet(self, query, max_items, attr_names))
-    
-    def select(self, query='', next_token=None, max_items=None):
+        return self.connection.batch_delete_attributes(self, items)
+
+    def select(self, query='', next_token=None, consistent_read=False, max_items=None):
         """
         Returns a set of Attributes for item names within domain_name that match the query.
         The query must be expressed in using the SELECT style syntax rather than the
@@ -161,19 +198,25 @@ class Domain:
         :type query: string
         :param query: The SimpleDB query to be performed.
 
-        :type max_items: int
-        :param max_items: The maximum number of items to return.
-
         :rtype: iter
         :return: An iterator containing the results.  This is actually a generator
                  function that will iterate across all search results, not just the
                  first page.
         """
-        return SelectResultSet(self, query, max_items=max_items,
-                               next_token=next_token)
-    
-    def get_item(self, item_name):
-        item = self.get_attributes(item_name)
+        return SelectResultSet(self, query, max_items=max_items, next_token=next_token,
+                               consistent_read=consistent_read)
+
+    def get_item(self, item_name, consistent_read=False):
+        """
+        Retrieves an item from the domain, along with all of its attributes.
+        
+        :param string item_name: The name of the item to retrieve.
+        :rtype: :class:`boto.sdb.item.Item` or ``None``
+        :keyword bool consistent_read: When set to true, ensures that the most 
+                                       recent data is returned.
+        :return: The requested item, or ``None`` if there was no match found 
+        """
+        item = self.get_attributes(item_name, consistent_read=consistent_read)
         if item:
             item.domain = self
             return item
@@ -197,26 +240,26 @@ class Domain:
         if not f:
             from tempfile import TemporaryFile
             f = TemporaryFile()
-        print >>f,  '<?xml version="1.0" encoding="UTF-8"?>'
-        print >>f,  '<Domain id="%s">' % self.name
+        print >> f, '<?xml version="1.0" encoding="UTF-8"?>'
+        print >> f, '<Domain id="%s">' % self.name
         for item in self:
-            print >>f, '\t<Item id="%s">' % item.name
+            print >> f, '\t<Item id="%s">' % item.name
             for k in item:
-                print >>f, '\t\t<attribute id="%s">' % k
+                print >> f, '\t\t<attribute id="%s">' % k
                 values = item[k]
                 if not isinstance(values, list):
                     values = [values]
                 for value in values:
-                    print >>f, '\t\t\t<value><![CDATA[',
+                    print >> f, '\t\t\t<value><![CDATA[',
                     if isinstance(value, unicode):
                         value = value.encode('utf-8', 'replace')
                     else:
                         value = unicode(value, errors='replace').encode('utf-8', 'replace')
                     f.write(value)
-                    print >>f, ']]></value>'
-                print >>f, '\t\t</attribute>'
-            print >>f, '\t</Item>'
-        print >>f, '</Domain>'
+                    print >> f, ']]></value>'
+                print >> f, '\t\t</attribute>'
+            print >> f, '\t</Item>'
+        print >> f, '</Domain>'
         f.flush()
         f.seek(0)
         return f
@@ -229,9 +272,15 @@ class Domain:
         xml.sax.parse(doc, handler)
         return handler
 
+    def delete(self):
+        """
+        Delete this domain, and all items under it
+        """
+        return self.connection.delete_domain(self)
+
 
 class DomainMetaData:
-    
+
     def __init__(self, domain=None):
         self.domain = domain
         self.item_count = None
@@ -268,7 +317,7 @@ class DomainDumpParser(ContentHandler):
     """
     SAX parser for a domain that has been dumped
     """
-    
+
     def __init__(self, domain):
         self.uploader = UploaderThread(domain)
         self.item_id = None
@@ -311,7 +360,7 @@ class DomainDumpParser(ContentHandler):
 from threading import Thread
 class UploaderThread(Thread):
     """Uploader Thread"""
-    
+
     def __init__(self, domain):
         self.db = domain
         self.items = {}

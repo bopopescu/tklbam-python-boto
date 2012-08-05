@@ -44,6 +44,8 @@ class DBInstance(object):
         self.preferred_backup_window = None
         self.preferred_maintenance_window = None
         self.latest_restorable_time = None
+        self.multi_az = False
+        self.pending_modified_values = None
         self._in_endpoint = False
         self._port = None
         self._address = None
@@ -60,6 +62,9 @@ class DBInstance(object):
         elif name == 'DBSecurityGroup':
             self.security_group = DBSecurityGroup(self.connection)
             return self.security_group
+        elif name == 'PendingModifiedValues':
+            self.pending_modified_values = PendingModifiedValues()
+            return self.pending_modified_values
         return None
 
     def endElement(self, name, value, connection):
@@ -98,6 +103,9 @@ class DBInstance(object):
             self.preferred_maintenance_window = value
         elif name == 'PreferredBackupWindow':
             self.preferred_backup_window = value
+        elif name == 'MultiAZ':
+            if value.lower() == 'true':
+                self.multi_az = True
         else:
             setattr(self, name, value)
 
@@ -113,7 +121,38 @@ class DBInstance(object):
         """
         return self.connection.create_dbsnapshot(snapshot_id, self.id)
 
-    def stop(self, skip_final_snapshot, final_snapshot_id):
+    def reboot(self):
+        """
+        Reboot this DBInstance
+        
+        :rtype: :class:`boto.rds.dbsnapshot.DBSnapshot`
+        :return: The newly created DBSnapshot
+        """
+        return self.connection.reboot_dbinstance(self.id)
+
+    def update(self, validate=False):
+        """
+        Update the DB instance's status information by making a call to fetch
+        the current instance attributes from the service.
+
+        :type validate: bool
+        :param validate: By default, if EC2 returns no data about the
+                         instance the update method returns quietly.  If
+                         the validate param is True, however, it will
+                         raise a ValueError exception if no data is
+                         returned from EC2.
+        """
+        rs = self.connection.get_all_dbinstances(self.id)
+        if len(rs) > 0:
+            for i in rs:
+                if i.id == self.id:
+                    self.__dict__.update(i.__dict__)
+        elif validate:
+            raise ValueError('%s is not a valid Instance ID' % self.id)
+        return self.status
+
+
+    def stop(self, skip_final_snapshot=False, final_snapshot_id=''):
         """
         Delete this DBInstance.
 
@@ -134,3 +173,92 @@ class DBInstance(object):
         return self.connection.delete_dbinstance(self.id,
                                                  skip_final_snapshot,
                                                  final_snapshot_id)
+
+    def modify(self, param_group=None, security_groups=None,
+               preferred_maintenance_window=None,
+               master_password=None, allocated_storage=None,
+               instance_class=None,
+               backup_retention_period=None,
+               preferred_backup_window=None,
+               multi_az=False,
+               apply_immediately=False):
+        """
+        Modify this DBInstance.
+
+        :type security_groups: list of str or list of DBSecurityGroup objects
+        :param security_groups: List of names of DBSecurityGroup to authorize on
+                                this DBInstance.
+
+        :type preferred_maintenance_window: str
+        :param preferred_maintenance_window: The weekly time range (in UTC)
+                                             during which maintenance can
+                                             occur.
+                                             Default is Sun:05:00-Sun:09:00
+
+        :type master_password: str
+        :param master_password: Password of master user for the DBInstance.
+                                Must be 4-15 alphanumeric characters.
+
+        :type allocated_storage: int
+        :param allocated_storage: The new allocated storage size, in GBs.
+                                  Valid values are [5-1024]
+
+        :type instance_class: str
+        :param instance_class: The compute and memory capacity of the
+                               DBInstance.  Changes will be applied at
+                               next maintenance window unless
+                               apply_immediately is True.
+
+                               Valid values are:
+                               
+                               * db.m1.small
+                               * db.m1.large
+                               * db.m1.xlarge
+                               * db.m2.xlarge
+                               * db.m2.2xlarge
+                               * db.m2.4xlarge
+
+        :type apply_immediately: bool
+        :param apply_immediately: If true, the modifications will be applied
+                                  as soon as possible rather than waiting for
+                                  the next preferred maintenance window.
+
+        :type backup_retention_period: int
+        :param backup_retention_period: The number of days for which automated
+                                        backups are retained.  Setting this to
+                                        zero disables automated backups.
+
+        :type preferred_backup_window: str
+        :param preferred_backup_window: The daily time range during which
+                                        automated backups are created (if
+                                        enabled).  Must be in h24:mi-hh24:mi
+                                        format (UTC).
+
+        :type multi_az: bool
+        :param multi_az: If True, specifies the DB Instance will be
+                         deployed in multiple availability zones.
+
+        :rtype: :class:`boto.rds.dbinstance.DBInstance`
+        :return: The modified db instance.
+        """
+        return self.connection.modify_dbinstance(self.id,
+                                                 param_group,
+                                                 security_groups,
+                                                 preferred_maintenance_window,
+                                                 master_password,
+                                                 allocated_storage,
+                                                 instance_class,
+                                                 backup_retention_period,
+                                                 preferred_backup_window,
+                                                 multi_az,
+                                                 apply_immediately)
+        
+class PendingModifiedValues(dict):
+
+    def startElement(self, name, attrs, connection):
+        return None
+
+    def endElement(self, name, value, connection):
+        if name != 'PendingModifiedValues':
+            self[name] = value
+
