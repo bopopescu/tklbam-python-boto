@@ -164,7 +164,7 @@ class Provider(object):
         self.name = name
         self.acl_class = self.AclClassMap[self.name]
         self.canned_acls = self.CannedAclsMap[self.name]
-        self.get_credentials(access_key, secret_key)
+        self.get_credentials(access_key, secret_key, security_token)
         self.configure_headers()
         self.configure_errors()
         # allow config file to override default host
@@ -172,7 +172,7 @@ class Provider(object):
         if config.has_option('Credentials', host_opt_name):
             self.host = config.get('Credentials', host_opt_name)
 
-    def get_credentials(self, access_key=None, secret_key=None):
+    def get_credentials(self, access_key=None, secret_key=None, security_token=None):
         access_key_name, secret_key_name = self.CredentialMap[self.name]
         if access_key is not None:
             self.access_key = access_key
@@ -187,6 +187,17 @@ class Provider(object):
             self.secret_key = os.environ[secret_key_name.upper()]
         elif config.has_option('Credentials', secret_key_name):
             self.secret_key = config.get('Credentials', secret_key_name)
+
+        security_token_name = self.HeaderInfoMap[self.name][SECURITY_TOKEN_HEADER_KEY]
+        security_token_name_env = security_token_name.upper().replace('-', '_')
+
+        if security_token is not None:
+            self.security_token = security_token
+        elif os.environ.has_key(security_token_name_env):
+            self.security_token = os.environ[security_token_name_env]
+        elif config.has_option('Credentials', security_token_name):
+            self.secret_key = config.get('Credentials', security_token_name)
+
         if isinstance(self.secret_key, unicode):
             # the secret key must be bytes and not unicode to work
             #  properly with hmac.new (see http://bugs.python.org/issue5285)
