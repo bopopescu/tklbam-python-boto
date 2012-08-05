@@ -1,7 +1,7 @@
-Source: python-boto
+Source: tklbam-python-boto
 Section: python
 Priority: optional
-Maintainer: Eric Evans <eevans@debian.org>
+Maintainer: Liraz Siri <liraz@turnkeylinux.org>
 Build-Depends: debhelper (>= 7), python-all (>= 2.6.6-3)
 X-Python-Version: >= 2.5
 Homepage: http://code.google.com/p/boto/
@@ -9,7 +9,7 @@ Vcs-Git: git://git.debian.org/git/users/eevans/python-boto
 Vcs-Browser: http://anonscm.debian.org/gitweb/?p=users/eevans/python-boto.git
 Standards-Version: 3.9.3
 
-Package: python-boto
+Package: tklbam-python-boto
 Architecture: all
 Depends: ${python:Depends}, ${misc:Depends}
 Provides: ${python:Provides}
