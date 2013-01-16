@@ -10,7 +10,7 @@ Vcs-Browser: http://anonscm.debian.org/gitweb/?p=users/eevans/python-boto.git
 Standards-Version: 3.9.3
 
 Package: tklbam-python-boto
-Architecture: all
+Architecture: any
 Depends: ${python:Depends}, ${misc:Depends}
 Provides: ${python:Provides}
 Description: Python interface to Amazon's Web Services
