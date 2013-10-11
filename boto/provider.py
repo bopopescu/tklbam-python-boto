@@ -27,12 +27,15 @@ This class encapsulates the provider-specific header differences.
 """
 
 import os
+from datetime import datetime
+
 import boto
 from boto import config
 from boto.gs.acl import ACL
 from boto.gs.acl import CannedACLStrings as CannedGSACLStrings
 from boto.s3.acl import CannedACLStrings as CannedS3ACLStrings
 from boto.s3.acl import Policy
+
 
 HEADER_PREFIX_KEY = 'header_prefix'
 METADATA_PREFIX_KEY = 'metadata_prefix'
@@ -65,132 +68,243 @@ STORAGE_RESPONSE_ERROR = 'StorageResponseError'
 class Provider(object):
 
     CredentialMap = {
-        'aws' : ('aws_access_key_id', 'aws_secret_access_key'),
-        'google' : ('gs_access_key_id', 'gs_secret_access_key'),
+        'aws':    ('aws_access_key_id', 'aws_secret_access_key'),
+        'google': ('gs_access_key_id',  'gs_secret_access_key'),
     }
 
     AclClassMap = {
-        'aws' : Policy,
-        'google' : ACL
+        'aws':    Policy,
+        'google': ACL
     }
 
     CannedAclsMap = {
-        'aws' : CannedS3ACLStrings,
-        'google' : CannedGSACLStrings
+        'aws':    CannedS3ACLStrings,
+        'google': CannedGSACLStrings
     }
 
     HostKeyMap = {
-        'aws' : 's3',
-        'google' : 'gs'
+        'aws':    's3',
+        'google': 'gs'
     }
 
     ChunkedTransferSupport = {
-        'aws' : False,
-        'google' : True
+        'aws':    False,
+        'google': True
+    }
+
+    MetadataServiceSupport = {
+        'aws': True,
+        'google': False
     }
 
     # If you update this map please make sure to put "None" for the
     # right-hand-side for any headers that don't apply to a provider, rather
     # than simply leaving that header out (which would cause KeyErrors).
     HeaderInfoMap = {
-        'aws' : {
-            HEADER_PREFIX_KEY : AWS_HEADER_PREFIX,
-            METADATA_PREFIX_KEY : AWS_HEADER_PREFIX + 'meta-',
-            ACL_HEADER_KEY : AWS_HEADER_PREFIX + 'acl',
-            AUTH_HEADER_KEY : 'AWS',
-            COPY_SOURCE_HEADER_KEY : AWS_HEADER_PREFIX + 'copy-source',
-            COPY_SOURCE_VERSION_ID_HEADER_KEY : AWS_HEADER_PREFIX +
+        'aws': {
+            HEADER_PREFIX_KEY: AWS_HEADER_PREFIX,
+            METADATA_PREFIX_KEY: AWS_HEADER_PREFIX + 'meta-',
+            ACL_HEADER_KEY: AWS_HEADER_PREFIX + 'acl',
+            AUTH_HEADER_KEY: 'AWS',
+            COPY_SOURCE_HEADER_KEY: AWS_HEADER_PREFIX + 'copy-source',
+            COPY_SOURCE_VERSION_ID_HEADER_KEY: AWS_HEADER_PREFIX +
                                                 'copy-source-version-id',
-            COPY_SOURCE_RANGE_HEADER_KEY : AWS_HEADER_PREFIX +
+            COPY_SOURCE_RANGE_HEADER_KEY: AWS_HEADER_PREFIX +
                                            'copy-source-range',
-            DATE_HEADER_KEY : AWS_HEADER_PREFIX + 'date',
-            DELETE_MARKER_HEADER_KEY : AWS_HEADER_PREFIX + 'delete-marker',
-            METADATA_DIRECTIVE_HEADER_KEY : AWS_HEADER_PREFIX +
+            DATE_HEADER_KEY: AWS_HEADER_PREFIX + 'date',
+            DELETE_MARKER_HEADER_KEY: AWS_HEADER_PREFIX + 'delete-marker',
+            METADATA_DIRECTIVE_HEADER_KEY: AWS_HEADER_PREFIX +
                                             'metadata-directive',
-            RESUMABLE_UPLOAD_HEADER_KEY : None,
-            SECURITY_TOKEN_HEADER_KEY : AWS_HEADER_PREFIX + 'security-token',
-            SERVER_SIDE_ENCRYPTION_KEY : AWS_HEADER_PREFIX + 'server-side-encryption',
-            VERSION_ID_HEADER_KEY : AWS_HEADER_PREFIX + 'version-id',
-            STORAGE_CLASS_HEADER_KEY : AWS_HEADER_PREFIX + 'storage-class',
-            MFA_HEADER_KEY : AWS_HEADER_PREFIX + 'mfa',
+            RESUMABLE_UPLOAD_HEADER_KEY: None,
+            SECURITY_TOKEN_HEADER_KEY: AWS_HEADER_PREFIX + 'security-token',
+            SERVER_SIDE_ENCRYPTION_KEY: AWS_HEADER_PREFIX +
+                                         'server-side-encryption',
+            VERSION_ID_HEADER_KEY: AWS_HEADER_PREFIX + 'version-id',
+            STORAGE_CLASS_HEADER_KEY: AWS_HEADER_PREFIX + 'storage-class',
+            MFA_HEADER_KEY: AWS_HEADER_PREFIX + 'mfa',
         },
-        'google' : {
-            HEADER_PREFIX_KEY : GOOG_HEADER_PREFIX,
-            METADATA_PREFIX_KEY : GOOG_HEADER_PREFIX + 'meta-',
-            ACL_HEADER_KEY : GOOG_HEADER_PREFIX + 'acl',
-            AUTH_HEADER_KEY : 'GOOG1',
-            COPY_SOURCE_HEADER_KEY : GOOG_HEADER_PREFIX + 'copy-source',
-            COPY_SOURCE_VERSION_ID_HEADER_KEY : GOOG_HEADER_PREFIX +
+        'google': {
+            HEADER_PREFIX_KEY: GOOG_HEADER_PREFIX,
+            METADATA_PREFIX_KEY: GOOG_HEADER_PREFIX + 'meta-',
+            ACL_HEADER_KEY: GOOG_HEADER_PREFIX + 'acl',
+            AUTH_HEADER_KEY: 'GOOG1',
+            COPY_SOURCE_HEADER_KEY: GOOG_HEADER_PREFIX + 'copy-source',
+            COPY_SOURCE_VERSION_ID_HEADER_KEY: GOOG_HEADER_PREFIX +
                                                 'copy-source-version-id',
-            COPY_SOURCE_RANGE_HEADER_KEY : None,
-            DATE_HEADER_KEY : GOOG_HEADER_PREFIX + 'date',
-            DELETE_MARKER_HEADER_KEY : GOOG_HEADER_PREFIX + 'delete-marker',
-            METADATA_DIRECTIVE_HEADER_KEY : GOOG_HEADER_PREFIX  +
+            COPY_SOURCE_RANGE_HEADER_KEY: None,
+            DATE_HEADER_KEY: GOOG_HEADER_PREFIX + 'date',
+            DELETE_MARKER_HEADER_KEY: GOOG_HEADER_PREFIX + 'delete-marker',
+            METADATA_DIRECTIVE_HEADER_KEY: GOOG_HEADER_PREFIX  +
                                             'metadata-directive',
-            RESUMABLE_UPLOAD_HEADER_KEY : GOOG_HEADER_PREFIX + 'resumable',
-            SECURITY_TOKEN_HEADER_KEY : GOOG_HEADER_PREFIX + 'security-token',
-            SERVER_SIDE_ENCRYPTION_KEY : None,
+            RESUMABLE_UPLOAD_HEADER_KEY: GOOG_HEADER_PREFIX + 'resumable',
+            SECURITY_TOKEN_HEADER_KEY: GOOG_HEADER_PREFIX + 'security-token',
+            SERVER_SIDE_ENCRYPTION_KEY: None,
             # Note that this version header is not to be confused with
             # the Google Cloud Storage 'x-goog-api-version' header.
-            VERSION_ID_HEADER_KEY : GOOG_HEADER_PREFIX + 'version-id',
-            STORAGE_CLASS_HEADER_KEY : None,
-            MFA_HEADER_KEY : None,
+            VERSION_ID_HEADER_KEY: GOOG_HEADER_PREFIX + 'version-id',
+            STORAGE_CLASS_HEADER_KEY: None,
+            MFA_HEADER_KEY: None,
         }
     }
 
     ErrorMap = {
-        'aws' : {
-            STORAGE_COPY_ERROR : boto.exception.S3CopyError,
-            STORAGE_CREATE_ERROR : boto.exception.S3CreateError,
-            STORAGE_DATA_ERROR : boto.exception.S3DataError,
-            STORAGE_PERMISSIONS_ERROR : boto.exception.S3PermissionsError,
-            STORAGE_RESPONSE_ERROR : boto.exception.S3ResponseError,
+        'aws': {
+            STORAGE_COPY_ERROR: boto.exception.S3CopyError,
+            STORAGE_CREATE_ERROR: boto.exception.S3CreateError,
+            STORAGE_DATA_ERROR: boto.exception.S3DataError,
+            STORAGE_PERMISSIONS_ERROR: boto.exception.S3PermissionsError,
+            STORAGE_RESPONSE_ERROR: boto.exception.S3ResponseError,
         },
-        'google' : {
-            STORAGE_COPY_ERROR : boto.exception.GSCopyError,
-            STORAGE_CREATE_ERROR : boto.exception.GSCreateError,
-            STORAGE_DATA_ERROR : boto.exception.GSDataError,
-            STORAGE_PERMISSIONS_ERROR : boto.exception.GSPermissionsError,
-            STORAGE_RESPONSE_ERROR : boto.exception.GSResponseError,
+        'google': {
+            STORAGE_COPY_ERROR: boto.exception.GSCopyError,
+            STORAGE_CREATE_ERROR: boto.exception.GSCreateError,
+            STORAGE_DATA_ERROR: boto.exception.GSDataError,
+            STORAGE_PERMISSIONS_ERROR: boto.exception.GSPermissionsError,
+            STORAGE_RESPONSE_ERROR: boto.exception.GSResponseError,
         }
     }
 
     def __init__(self, name, access_key=None, secret_key=None,
                  security_token=None):
         self.host = None
+        self.port = None
         self.access_key = access_key
         self.secret_key = secret_key
         self.security_token = security_token
         self.name = name
         self.acl_class = self.AclClassMap[self.name]
         self.canned_acls = self.CannedAclsMap[self.name]
+        self._credential_expiry_time = None
         self.get_credentials(access_key, secret_key)
         self.configure_headers()
         self.configure_errors()
-        # allow config file to override default host
+        # Allow config file to override default host and port.
         host_opt_name = '%s_host' % self.HostKeyMap[self.name]
         if config.has_option('Credentials', host_opt_name):
             self.host = config.get('Credentials', host_opt_name)
+        port_opt_name = '%s_port' % self.HostKeyMap[self.name]
+        if config.has_option('Credentials', port_opt_name):
+            self.port = config.getint('Credentials', port_opt_name)
+
+    def get_access_key(self):
+        if self._credentials_need_refresh():
+            self._populate_keys_from_metadata_server()
+        return self._access_key
+
+    def set_access_key(self, value):
+        self._access_key = value
+
+    access_key = property(get_access_key, set_access_key)
+
+    def get_secret_key(self):
+        if self._credentials_need_refresh():
+            self._populate_keys_from_metadata_server()
+        return self._secret_key
+
+    def set_secret_key(self, value):
+        self._secret_key = value
+
+    secret_key = property(get_secret_key, set_secret_key)
+
+    def get_security_token(self):
+        if self._credentials_need_refresh():
+            self._populate_keys_from_metadata_server()
+        return self._security_token
+
+    def set_security_token(self, value):
+        self._security_token = value
+
+    security_token = property(get_security_token, set_security_token)
+
+    def _credentials_need_refresh(self):
+        if self._credential_expiry_time is None:
+            return False
+        else:
+            # The credentials should be refreshed if they're going to expire
+            # in less than 5 minutes.
+            delta = self._credential_expiry_time - datetime.utcnow()
+            # python2.6 does not have timedelta.total_seconds() so we have
+            # to calculate this ourselves.  This is straight from the
+            # datetime docs.
+            seconds_left = (
+                (delta.microseconds + (delta.seconds + delta.days * 24 * 3600)
+                 * 10**6) / 10**6)
+            if seconds_left < (5 * 60):
+                boto.log.debug("Credentials need to be refreshed.")
+                return True
+            else:
+                return False
 
     def get_credentials(self, access_key=None, secret_key=None):
         access_key_name, secret_key_name = self.CredentialMap[self.name]
         if access_key is not None:
             self.access_key = access_key
-        elif os.environ.has_key(access_key_name.upper()):
+            boto.log.debug("Using access key provided by client.")
+        elif access_key_name.upper() in os.environ:
             self.access_key = os.environ[access_key_name.upper()]
+            boto.log.debug("Using access key found in environment variable.")
         elif config.has_option('Credentials', access_key_name):
             self.access_key = config.get('Credentials', access_key_name)
+            boto.log.debug("Using access key found in config file.")
 
         if secret_key is not None:
             self.secret_key = secret_key
-        elif os.environ.has_key(secret_key_name.upper()):
+            boto.log.debug("Using secret key provided by client.")
+        elif secret_key_name.upper() in os.environ:
             self.secret_key = os.environ[secret_key_name.upper()]
+            boto.log.debug("Using secret key found in environment variable.")
         elif config.has_option('Credentials', secret_key_name):
             self.secret_key = config.get('Credentials', secret_key_name)
-        if isinstance(self.secret_key, unicode):
+            boto.log.debug("Using secret key found in config file.")
+        elif config.has_option('Credentials', 'keyring'):
+            keyring_name = config.get('Credentials', 'keyring')
+            try:
+                import keyring
+            except ImportError:
+                boto.log.error("The keyring module could not be imported. "
+                               "For keyring support, install the keyring "
+                               "module.")
+                raise
+            self.secret_key = keyring.get_password(
+                keyring_name, self.access_key)
+            boto.log.debug("Using secret key found in keyring.")
+
+        if ((self._access_key is None or self._secret_key is None) and
+                self.MetadataServiceSupport[self.name]):
+            self._populate_keys_from_metadata_server()
+        self._secret_key = self._convert_key_to_str(self._secret_key)
+
+    def _populate_keys_from_metadata_server(self):
+        # get_instance_metadata is imported here because of a circular
+        # dependency.
+        boto.log.debug("Retrieving credentials from metadata server.")
+        from boto.utils import get_instance_metadata
+        timeout = config.getfloat('Boto', 'metadata_service_timeout', 1.0)
+        attempts = config.getint('Boto', 'metadata_service_num_attempts', 1)
+        # The num_retries arg is actually the total number of attempts made,
+        # so the config options is named *_num_attempts to make this more
+        # clear to users.
+        metadata = get_instance_metadata(
+            timeout=timeout, num_retries=attempts,
+            data='meta-data/iam/security-credentials')
+        if metadata:
+            # I'm assuming there's only one role on the instance profile.
+            security = metadata.values()[0]
+            self._access_key = security['AccessKeyId']
+            self._secret_key = self._convert_key_to_str(security['SecretAccessKey'])
+            self._security_token = security['Token']
+            expires_at = security['Expiration']
+            self._credential_expiry_time = datetime.strptime(
+                expires_at, "%Y-%m-%dT%H:%M:%SZ")
+            boto.log.debug("Retrieved credentials will expire in %s at: %s",
+                           self._credential_expiry_time - datetime.now(), expires_at)
+
+    def _convert_key_to_str(self, key):
+        if isinstance(key, unicode):
             # the secret key must be bytes and not unicode to work
             #  properly with hmac.new (see http://bugs.python.org/issue5285)
-            self.secret_key = str(self.secret_key)
+            return str(key)
+        return key
 
     def configure_headers(self):
         header_info_map = self.HeaderInfoMap[self.name]

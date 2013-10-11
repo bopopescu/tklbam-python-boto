@@ -4,10 +4,10 @@ Priority: optional
 Maintainer: Eric Evans <eevans@debian.org>
 Build-Depends: debhelper (>= 7), python-all (>= 2.6.6-3)
 X-Python-Version: >= 2.5
-Homepage: http://code.google.com/p/boto/
+Homepage: https://github.com/boto/boto
 Vcs-Git: git://git.debian.org/git/users/eevans/python-boto
 Vcs-Browser: http://anonscm.debian.org/gitweb/?p=users/eevans/python-boto.git
-Standards-Version: 3.9.3
+Standards-Version: 3.9.4
 
 Package: python-boto
 Architecture: all
@@ -19,9 +19,18 @@ Description: Python interface to Amazon's Web Services
  .
  Boto supports the following services:
   * Elastic Compute Cloud (EC2)
-  * SimpleDB
-  * Simple Storage Service (S3)
-  * CloudFront
-  * Simple Queue Service (SQS)
   * Elastic MapReduce
+  * CloudFront
+  * DynamoDB
+  * SimpleDB
   * Relational Database Service (RDS)
+  * Identity and Access Management (IAM)
+  * Simple Queue Service (SQS)
+  * CloudWatch
+  * Route53
+  * Elastic Load Balancing (ELB)
+  * Flexible Payment Service (FPS)
+  * Simple Storage Service (S3)
+  * Glacier
+  * Elastic Block Store (EBS)
+  * and many more...

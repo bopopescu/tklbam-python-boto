@@ -1,5 +1,7 @@
 # Copyright (c) 2009-2011 Reza Lotun http://reza.lotun.name/
 # Copyright (c) 2011 Jann Kleen
+# Copyright (c) 2012 Mitch Garnaat http://garnaat.org/
+# Copyright (c) 2012 Amazon.com, Inc. or its affiliates.  All Rights Reserved
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
 # copy of this software and associated documentation files (the
@@ -32,9 +34,13 @@ from boto.connection import AWSQueryConnection
 from boto.ec2.regioninfo import RegionInfo
 from boto.ec2.autoscale.request import Request
 from boto.ec2.autoscale.launchconfig import LaunchConfiguration
-from boto.ec2.autoscale.group import AutoScalingGroup, ProcessType
+from boto.ec2.autoscale.group import AutoScalingGroup
+from boto.ec2.autoscale.group import ProcessType
 from boto.ec2.autoscale.activity import Activity
-from boto.ec2.autoscale.policy import AdjustmentType, MetricCollectionTypes, ScalingPolicy
+from boto.ec2.autoscale.policy import AdjustmentType
+from boto.ec2.autoscale.policy import MetricCollectionTypes
+from boto.ec2.autoscale.policy import ScalingPolicy
+from boto.ec2.autoscale.policy import TerminationPolicies
 from boto.ec2.autoscale.instance import Instance
 from boto.ec2.autoscale.scheduled import ScheduledUpdateGroupAction
 from boto.ec2.autoscale.tag import Tag
@@ -46,7 +52,10 @@ RegionData = {
     'sa-east-1': 'autoscaling.sa-east-1.amazonaws.com',
     'eu-west-1': 'autoscaling.eu-west-1.amazonaws.com',
     'ap-northeast-1': 'autoscaling.ap-northeast-1.amazonaws.com',
-    'ap-southeast-1': 'autoscaling.ap-southeast-1.amazonaws.com'}
+    'ap-southeast-1': 'autoscaling.ap-southeast-1.amazonaws.com',
+    'ap-southeast-2': 'autoscaling.ap-southeast-2.amazonaws.com',
+}
+
 
 def regions():
     """
@@ -62,6 +71,7 @@ def regions():
                             connection_cls=AutoScaleConnection)
         regions.append(region)
     return regions
+
 
 def connect_to_region(region_name, **kw_params):
     """
@@ -79,17 +89,19 @@ def connect_to_region(region_name, **kw_params):
             return region.connect(**kw_params)
     return None
 
+
 class AutoScaleConnection(AWSQueryConnection):
     APIVersion = boto.config.get('Boto', 'autoscale_version', '2011-01-01')
     DefaultRegionEndpoint = boto.config.get('Boto', 'autoscale_endpoint',
-                                            'autoscaling.amazonaws.com')
-    DefaultRegionName =  boto.config.get('Boto', 'autoscale_region_name',
-                                         'us-east-1')
+                                            'autoscaling.us-east-1.amazonaws.com')
+    DefaultRegionName = boto.config.get('Boto', 'autoscale_region_name',
+                                        'us-east-1')
 
     def __init__(self, aws_access_key_id=None, aws_secret_access_key=None,
                  is_secure=True, port=None, proxy=None, proxy_port=None,
                  proxy_user=None, proxy_pass=None, debug=0,
-                 https_connection_factory=None, region=None, path='/'):
+                 https_connection_factory=None, region=None, path='/',
+                 security_token=None, validate_certs=True):
         """
         Init method to create a new connection to the AutoScaling service.
 
@@ -106,10 +118,12 @@ class AutoScaleConnection(AWSQueryConnection):
                                     is_secure, port, proxy, proxy_port,
                                     proxy_user, proxy_pass,
                                     self.region.endpoint, debug,
-                                    https_connection_factory, path=path)
+                                    https_connection_factory, path=path,
+                                    security_token=security_token,
+                                    validate_certs=validate_certs)
 
     def _required_auth_capability(self):
-        return ['ec2']
+        return ['hmac-v4']
 
     def build_list_params(self, params, items, label):
         """
@@ -129,16 +143,16 @@ class AutoScaleConnection(AWSQueryConnection):
             ['us-east-1b',...]
         """
         # different from EC2 list params
-        for i in xrange(1, len(items)+1):
-            if isinstance(items[i-1], dict):
-                for k, v in items[i-1].iteritems():
+        for i in xrange(1, len(items) + 1):
+            if isinstance(items[i - 1], dict):
+                for k, v in items[i - 1].iteritems():
                     if isinstance(v, dict):
                         for kk, vv in v.iteritems():
                             params['%s.member.%d.%s.%s' % (label, i, k, kk)] = vv
                     else:
                         params['%s.member.%d.%s' % (label, i, k)] = v
-            elif isinstance(items[i-1], basestring):
-                params['%s.member.%d' % (label, i)] = items[i-1]
+            elif isinstance(items[i - 1], basestring):
+                params['%s.member.%d' % (label, i)] = items[i - 1]
 
     def _update_group(self, op, as_group):
         params = {'AutoScalingGroupName': as_group.name,
@@ -160,12 +174,18 @@ class AutoScaleConnection(AWSQueryConnection):
             params['DefaultCooldown'] = as_group.default_cooldown
         if as_group.placement_group:
             params['PlacementGroup'] = as_group.placement_group
+        if as_group.termination_policies:
+            self.build_list_params(params, as_group.termination_policies,
+                                   'TerminationPolicies')
         if op.startswith('Create'):
             # you can only associate load balancers with an autoscale
             # group at creation time
             if as_group.load_balancers:
                 self.build_list_params(params, as_group.load_balancers,
                                        'LoadBalancerNames')
+            if as_group.tags:
+                for i, tag in enumerate(as_group.tags):
+                    tag.build_params(params, i + 1)
         return self.get_object(op, params, Request)
 
     def create_auto_scaling_group(self, as_group):
@@ -204,8 +224,7 @@ class AutoScaleConnection(AWSQueryConnection):
         if launch_config.ramdisk_id:
             params['RamdiskId'] = launch_config.ramdisk_id
         if launch_config.block_device_mappings:
-            self.build_list_params(params, launch_config.block_device_mappings,
-                                   'BlockDeviceMappings')
+            [x.build_list_params(params) for x in launch_config.block_device_mappings]
         if launch_config.security_groups:
             self.build_list_params(params, launch_config.security_groups,
                                    'SecurityGroups')
@@ -213,6 +232,14 @@ class AutoScaleConnection(AWSQueryConnection):
             params['InstanceMonitoring.Enabled'] = 'true'
         else:
             params['InstanceMonitoring.Enabled'] = 'false'
+        if launch_config.spot_price is not None:
+            params['SpotPrice'] = str(launch_config.spot_price)
+        if launch_config.instance_profile_name is not None:
+            params['IamInstanceProfile'] = launch_config.instance_profile_name
+        if launch_config.ebs_optimized:
+            params['EbsOptimized'] = 'true'
+        else:
+            params['EbsOptimized'] = 'false'
         return self.get_object('CreateLaunchConfiguration', params,
                                Request, verb='POST')
 
@@ -227,6 +254,11 @@ class AutoScaleConnection(AWSQueryConnection):
                   'AutoScalingGroupName': scaling_policy.as_name,
                   'PolicyName': scaling_policy.name,
                   'ScalingAdjustment': scaling_policy.scaling_adjustment}
+
+        if scaling_policy.adjustment_type == "PercentChangeInCapacity" and \
+           scaling_policy.min_adjustment_step is not None:
+            params['MinAdjustmentStep'] = scaling_policy.min_adjustment_step
+
         if scaling_policy.cooldown is not None:
             params['Cooldown'] = scaling_policy.cooldown
 
@@ -333,7 +365,7 @@ class AutoScaleConnection(AWSQueryConnection):
         name = autoscale_group
         if isinstance(autoscale_group, AutoScalingGroup):
             name = autoscale_group.name
-        params = {'AutoScalingGroupName' : name}
+        params = {'AutoScalingGroupName': name}
         if max_records:
             params['MaxRecords'] = max_records
         if next_token:
@@ -342,6 +374,15 @@ class AutoScaleConnection(AWSQueryConnection):
             self.build_list_params(params, activity_ids, 'ActivityIds')
         return self.get_list('DescribeScalingActivities',
                              params, [('member', Activity)])
+
+    def get_termination_policies(self):
+        """Gets all valid termination policies.
+
+        These values can then be used as the termination_policies arg
+        when creating and updating autoscale groups.
+        """
+        return self.get_object('DescribeTerminationPolicyTypes',
+                               {}, TerminationPolicies)
 
     def delete_scheduled_action(self, scheduled_action_name,
                                 autoscale_group=None):
@@ -419,7 +460,7 @@ class AutoScaleConnection(AWSQueryConnection):
 
         :rtype: list
         :returns: List of
-            :class:`boto.ec2.autoscale.activity.Activity` objects.
+            :class:`boto.ec2.autoscale.instance.Instance` objects.
         """
         params = {}
         if instance_ids:
@@ -488,12 +529,13 @@ class AutoScaleConnection(AWSQueryConnection):
         :param as_group: The auto scaling group to suspend processes on.
 
         :type scaling_processes: list
-        :param scaling_processes: Processes you want to suspend. If omitted, all
-            processes will be suspended.
+        :param scaling_processes: Processes you want to suspend. If omitted,
+            all processes will be suspended.
         """
         params = {'AutoScalingGroupName': as_group}
         if scaling_processes:
-            self.build_list_params(params, scaling_processes, 'ScalingProcesses')
+            self.build_list_params(params, scaling_processes,
+                                   'ScalingProcesses')
         return self.get_status('SuspendProcesses', params)
 
     def resume_processes(self, as_group, scaling_processes=None):
@@ -510,12 +552,15 @@ class AutoScaleConnection(AWSQueryConnection):
         params = {'AutoScalingGroupName': as_group}
 
         if scaling_processes:
-            self.build_list_params(params, scaling_processes, 'ScalingProcesses')
+            self.build_list_params(params, scaling_processes,
+                                   'ScalingProcesses')
         return self.get_status('ResumeProcesses', params)
 
-    def create_scheduled_group_action(self, as_group, name, time,
+    def create_scheduled_group_action(self, as_group, name, time=None,
                                       desired_capacity=None,
-                                      min_size=None, max_size=None):
+                                      min_size=None, max_size=None,
+                                      start_time=None, end_time=None,
+                                      recurrence=None):
         """
         Creates a scheduled scaling action for a Auto Scaling group. If you
         leave a parameter unspecified, the corresponding value remains
@@ -528,7 +573,7 @@ class AutoScaleConnection(AWSQueryConnection):
         :param name: Scheduled action name.
 
         :type time: datetime.datetime
-        :param time: The time for this action to start.
+        :param time: The time for this action to start. (Depracated)
 
         :type desired_capacity: int
         :param desired_capacity: The number of EC2 instances that should
@@ -539,10 +584,26 @@ class AutoScaleConnection(AWSQueryConnection):
 
         :type max_size: int
         :param max_size: The minimum size for the new auto scaling group.
+
+        :type start_time: datetime.datetime
+        :param start_time: The time for this action to start. When StartTime and EndTime are specified with Recurrence, they form the boundaries of when the recurring action will start and stop.
+
+        :type end_time: datetime.datetime
+        :param end_time: The time for this action to end. When StartTime and EndTime are specified with Recurrence, they form the boundaries of when the recurring action will start and stop.
+
+        :type recurrence: string
+        :param recurrence: The time when recurring future actions will start. Start time is specified by the user following the Unix cron syntax format. EXAMPLE: '0 10 * * *'
         """
         params = {'AutoScalingGroupName': as_group,
-                  'ScheduledActionName': name,
-                  'Time': time.isoformat()}
+                  'ScheduledActionName': name}
+        if start_time is not None:
+            params['StartTime'] = start_time.isoformat()
+        if end_time is not None:
+            params['EndTime'] = end_time.isoformat()
+        if recurrence is not None:
+            params['Recurrence'] = recurrence
+        if time:
+            params['Time'] = time.isoformat()
         if desired_capacity is not None:
             params['DesiredCapacity'] = desired_capacity
         if min_size is not None:
@@ -614,6 +675,34 @@ class AutoScaleConnection(AWSQueryConnection):
             params['HonorCooldown'] = honor_cooldown
         return self.get_status('ExecutePolicy', params)
 
+    def put_notification_configuration(self, autoscale_group, topic, notification_types):
+        """
+        Configures an Auto Scaling group to send notifications when
+        specified events take place.
+
+        :type as_group: str or
+            :class:`boto.ec2.autoscale.group.AutoScalingGroup` object
+        :param as_group: The Auto Scaling group to put notification
+            configuration on.
+
+        :type topic: str
+        :param topic: The Amazon Resource Name (ARN) of the Amazon Simple
+            Notification Service (SNS) topic.
+
+        :type notification_types: list
+        :param notification_types: The type of events that will trigger
+            the notification.
+        """
+
+        name = autoscale_group
+        if isinstance(autoscale_group, AutoScalingGroup):
+            name = autoscale_group.name
+
+        params = {'AutoScalingGroupName': name,
+                  'TopicARN': topic}
+        self.build_list_params(params, notification_types, 'NotificationTypes')
+        return self.get_status('PutNotificationConfiguration', params)
+
     def set_instance_health(self, instance_id, health_status,
                             should_respect_grace_period=True):
         """
@@ -640,14 +729,39 @@ class AutoScaleConnection(AWSQueryConnection):
             params['ShouldRespectGracePeriod'] = 'false'
         return self.get_status('SetInstanceHealth', params)
 
+    def set_desired_capacity(self, group_name, desired_capacity, honor_cooldown=False):
+        """
+        Adjusts the desired size of the AutoScalingGroup by initiating scaling
+        activities. When reducing the size of the group, it is not possible to define
+        which Amazon EC2 instances will be terminated. This applies to any Auto Scaling
+        decisions that might result in terminating instances.
+
+        :type group_name: string
+        :param group_name: name of the auto scaling group
+
+        :type desired_capacity: integer
+        :param desired_capacity: new capacity setting for auto scaling group
+
+        :type honor_cooldown: boolean
+        :param honor_cooldown: by default, overrides any cooldown period
+        """
+        params = {'AutoScalingGroupName': group_name,
+                  'DesiredCapacity': desired_capacity}
+        if honor_cooldown:
+            params['HonorCooldown'] = json.dumps('True')
+
+        return self.get_status('SetDesiredCapacity', params)
+
     # Tag methods
 
     def get_all_tags(self, filters=None, max_records=None, next_token=None):
         """
         Lists the Auto Scaling group tags.
 
-        This action supports pagination by returning a token if there are more
-        pages to retrieve. To get the next page, call this action again with             the returned token as the NextToken parameter.
+        This action supports pagination by returning a token if there
+        are more pages to retrieve. To get the next page, call this
+        action again with the returned token as the NextToken
+        parameter.
 
         :type filters: dict
         :param filters: The value of the filter type used to identify
@@ -677,7 +791,7 @@ class AutoScaleConnection(AWSQueryConnection):
         """
         params = {}
         for i, tag in enumerate(tags):
-            tag.build_params(params, i+1)
+            tag.build_params(params, i + 1)
         return self.get_status('CreateOrUpdateTags', params, verb='POST')
 
     def delete_tags(self, tags):
@@ -689,7 +803,5 @@ class AutoScaleConnection(AWSQueryConnection):
         """
         params = {}
         for i, tag in enumerate(tags):
-            tag.build_params(params, i+1)
+            tag.build_params(params, i + 1)
         return self.get_status('DeleteTags', params, verb='POST')
-
-    

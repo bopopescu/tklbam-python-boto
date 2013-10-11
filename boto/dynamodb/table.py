@@ -15,16 +15,69 @@
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
 # OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABIL-
 # ITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-# SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
+# SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
 # WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
 #
 
+from boto.dynamodb.batch import BatchList
 from boto.dynamodb.schema import Schema
 from boto.dynamodb.item import Item
 from boto.dynamodb import exceptions as dynamodb_exceptions
 import time
+
+
+class TableBatchGenerator(object):
+    """
+    A low-level generator used to page through results from
+    batch_get_item operations.
+
+    :ivar consumed_units: An integer that holds the number of
+        ConsumedCapacityUnits accumulated thus far for this
+        generator.
+    """
+
+    def __init__(self, table, keys, attributes_to_get=None,
+                 consistent_read=False):
+        self.table = table
+        self.keys = keys
+        self.consumed_units = 0
+        self.attributes_to_get = attributes_to_get
+        self.consistent_read = consistent_read
+
+    def _queue_unprocessed(self, res):
+        if not u'UnprocessedKeys' in res:
+            return
+        if not self.table.name in res[u'UnprocessedKeys']:
+            return
+
+        keys = res[u'UnprocessedKeys'][self.table.name][u'Keys']
+
+        for key in keys:
+            h = key[u'HashKeyElement']
+            r = key[u'RangeKeyElement'] if u'RangeKeyElement' in key else None
+            self.keys.append((h, r))
+
+    def __iter__(self):
+        while self.keys:
+            # Build the next batch
+            batch = BatchList(self.table.layer2)
+            batch.add_batch(self.table, self.keys[:100],
+                            self.attributes_to_get)
+            res = batch.submit()
+
+            # parse the results
+            if not self.table.name in res[u'Responses']:
+                continue
+            self.consumed_units += res[u'Responses'][self.table.name][u'ConsumedCapacityUnits']
+            for elem in res[u'Responses'][self.table.name][u'Items']:
+                yield elem
+
+            # re-queue un processed keys
+            self.keys = self.keys[100:]
+            self._queue_unprocessed(res)
+
 
 class Table(object):
     """
@@ -49,10 +102,53 @@ class Table(object):
     :ivar schema: The Schema object associated with the table.
     """
 
-    def __init__(self, layer2, response=None):
+    def __init__(self, layer2, response):
+        """
+
+        :type layer2: :class:`boto.dynamodb.layer2.Layer2`
+        :param layer2: A `Layer2` api object.
+
+        :type response: dict
+        :param response: The output of
+            `boto.dynamodb.layer1.Layer1.describe_table`.
+
+        """
         self.layer2 = layer2
         self._dict = {}
         self.update_from_response(response)
+
+    @classmethod
+    def create_from_schema(cls, layer2, name, schema):
+        """Create a Table object.
+
+        If you know the name and schema of your table, you can
+        create a ``Table`` object without having to make any
+        API calls (normally an API call is made to retrieve
+        the schema of a table).
+
+        Example usage::
+
+            table = Table.create_from_schema(
+                boto.connect_dynamodb(),
+                'tablename',
+                Schema.create(hash_key=('keyname', 'N')))
+
+        :type layer2: :class:`boto.dynamodb.layer2.Layer2`
+        :param layer2: A ``Layer2`` api object.
+
+        :type name: str
+        :param name: The name of the table.
+
+        :type schema: :class:`boto.dynamodb.schema.Schema`
+        :param schema: The schema associated with the table.
+
+        :rtype: :class:`boto.dynamodb.table.Table`
+        :return: A Table object representing the table.
+
+        """
+        table = cls(layer2, {'Table': {'TableName': name}})
+        table._schema = schema
+        return table
 
     def __repr__(self):
         return 'Table(%s)' % self.name
@@ -60,42 +156,50 @@ class Table(object):
     @property
     def name(self):
         return self._dict['TableName']
-    
+
     @property
     def create_time(self):
-        return self._dict['CreationDateTime']
-    
+        return self._dict.get('CreationDateTime', None)
+
     @property
     def status(self):
-        return self._dict['TableStatus']
-    
+        return self._dict.get('TableStatus', None)
+
     @property
     def item_count(self):
         return self._dict.get('ItemCount', 0)
-    
+
     @property
     def size_bytes(self):
         return self._dict.get('TableSizeBytes', 0)
-    
+
     @property
     def schema(self):
         return self._schema
 
     @property
     def read_units(self):
-        return self._dict['ProvisionedThroughput']['ReadCapacityUnits']
-    
+        try:
+            return self._dict['ProvisionedThroughput']['ReadCapacityUnits']
+        except KeyError:
+            return None
+
     @property
     def write_units(self):
-        return self._dict['ProvisionedThroughput']['WriteCapacityUnits']
-    
+        try:
+            return self._dict['ProvisionedThroughput']['WriteCapacityUnits']
+        except KeyError:
+            return None
+
     def update_from_response(self, response):
         """
         Update the state of the Table object based on the response
         data received from Amazon DynamoDB.
         """
+        # 'Table' is from a describe_table call.
         if 'Table' in response:
             self._dict.update(response['Table'])
+        # 'TableDescription' is from a create_table call.
         elif 'TableDescription' in response:
             self._dict.update(response['TableDescription'])
         if 'KeySchema' in self._dict:
@@ -134,12 +238,12 @@ class Table(object):
 
         :type read_units: int
         :param read_units: The new value for ReadCapacityUnits.
-        
+
         :type write_units: int
         :param write_units: The new value for WriteCapacityUnits.
         """
         self.layer2.update_throughput(self, read_units, write_units)
-        
+
     def delete(self):
         """
         Delete this table and all items in it.  After calling this
@@ -153,16 +257,16 @@ class Table(object):
         """
         Retrieve an existing item from the table.
 
-        :type hash_key: int|long|float|str|unicode
+        :type hash_key: int|long|float|str|unicode|Binary
         :param hash_key: The HashKey of the requested item.  The
             type of the value must match the type defined in the
             schema for the table.
-        
-        :type range_key: int|long|float|str|unicode
+
+        :type range_key: int|long|float|str|unicode|Binary
         :param range_key: The optional RangeKey of the requested item.
             The type of the value must match the type defined in the
             schema for the table.
-            
+
         :type attributes_to_get: list
         :param attributes_to_get: A list of attribute names.
             If supplied, only the specified attribute names will
@@ -182,7 +286,7 @@ class Table(object):
                                     attributes_to_get, consistent_read,
                                     item_class)
     lookup = get_item
-    
+
     def has_item(self, hash_key, range_key=None, consistent_read=False):
         """
         Checks the table to see if the Item with the specified ``hash_key``
@@ -191,12 +295,12 @@ class Table(object):
         the data that is returned, since this method specifically tells
         Amazon not to return anything but the Item's key.
 
-        :type hash_key: int|long|float|str|unicode
+        :type hash_key: int|long|float|str|unicode|Binary
         :param hash_key: The HashKey of the requested item.  The
             type of the value must match the type defined in the
             schema for the table.
 
-        :type range_key: int|long|float|str|unicode
+        :type range_key: int|long|float|str|unicode|Binary
         :param range_key: The optional RangeKey of the requested item.
             The type of the value must match the type defined in the
             schema for the table.
@@ -231,7 +335,8 @@ class Table(object):
         the hash_key and range_key values of the item.  You can use
         these explicit parameters when calling the method, such as::
 
-            >>> my_item = my_table.new_item(hash_key='a', range_key=1, attrs={'key1': 'val1', 'key2': 'val2'})
+            >>> my_item = my_table.new_item(hash_key='a', range_key=1,
+                                        attrs={'key1': 'val1', 'key2': 'val2'})
             >>> my_item
             {u'bar': 1, u'foo': 'a', 'key1': 'val1', 'key2': 'val2'}
 
@@ -252,12 +357,12 @@ class Table(object):
            the explicit parameters, the values in the attrs will be
            ignored.
 
-        :type hash_key: int|long|float|str|unicode
+        :type hash_key: int|long|float|str|unicode|Binary
         :param hash_key: The HashKey of the new item.  The
             type of the value must match the type defined in the
             schema for the table.
-        
-        :type range_key: int|long|float|str|unicode
+
+        :type range_key: int|long|float|str|unicode|Binary
         :param range_key: The optional RangeKey of the new item.
             The type of the value must match the type defined in the
             schema for the table.
@@ -265,41 +370,33 @@ class Table(object):
         :type attrs: dict
         :param attrs: A dictionary of key value pairs used to
             populate the new item.
-            
+
         :type item_class: Class
         :param item_class: Allows you to override the class used
             to generate the items. This should be a subclass of
             :class:`boto.dynamodb.item.Item`
-        
         """
         return item_class(self, hash_key, range_key, attrs)
 
-    def query(self, hash_key, range_key_condition=None,
-              attributes_to_get=None, request_limit=None,
-              max_results=None, consistent_read=False,
-              scan_index_forward=True, exclusive_start_key=None,
-              item_class=Item):
+    def query(self, hash_key, *args, **kw):
         """
         Perform a query on the table.
-        
-        :type hash_key: int|long|float|str|unicode
+
+        :type hash_key: int|long|float|str|unicode|Binary
         :param hash_key: The HashKey of the requested item.  The
             type of the value must match the type defined in the
             schema for the table.
 
-        :type range_key_condition: dict
-        :param range_key_condition: A dict where the key is either
-            a scalar value appropriate for the RangeKey in the schema
-            of the database or a tuple of such values.  The value
-            associated with this key in the dict will be one of the
-            following conditions:
+        :type range_key_condition: :class:`boto.dynamodb.condition.Condition`
+        :param range_key_condition: A Condition object.
+            Condition object can be one of the following types:
 
-            'EQ'|'LE'|'LT'|'GE'|'GT'|'BEGINS_WITH'|'BETWEEN'
+            EQ|LE|LT|GE|GT|BEGINS_WITH|BETWEEN
 
-            The only condition which expects or will accept a tuple
-            of values is 'BETWEEN', otherwise a scalar value should
-            be used as the key in the dict.
-        
+            The only condition which expects or will accept two
+            values is 'BETWEEN', otherwise a single value should
+            be passed to the Condition constructor.
+
         :type attributes_to_get: list
         :param attributes_to_get: A list of attribute names.
             If supplied, only the specified attribute names will
@@ -334,31 +431,33 @@ class Table(object):
             which to continue an earlier query.  This would be
             provided as the LastEvaluatedKey in that query.
 
+        :type count: bool
+        :param count: If True, Amazon DynamoDB returns a total
+            number of items for the Query operation, even if the
+            operation has no matching items for the assigned filter.
+            If count is True, the actual items are not returned and
+            the count is accessible as the ``count`` attribute of
+            the returned object.
+
+
         :type item_class: Class
         :param item_class: Allows you to override the class used
             to generate the items. This should be a subclass of
             :class:`boto.dynamodb.item.Item`
         """
-        return self.layer2.query(self, hash_key, range_key_condition,
-                                 attributes_to_get, request_limit,
-                                 max_results, consistent_read,
-                                 scan_index_forward, exclusive_start_key,
-                                 item_class=item_class)
+        return self.layer2.query(self, hash_key, *args, **kw)
 
-    def scan(self, scan_filter=None,
-             attributes_to_get=None, request_limit=None, max_results=None,
-             count=False, exclusive_start_key=None, item_class=Item):
+    def scan(self, *args, **kw):
         """
         Scan through this table, this is a very long
         and expensive operation, and should be avoided if
         at all possible.
 
-        :type scan_filter: A list of tuples
-        :param scan_filter: A list of tuples where each tuple consists
-            of an attribute name, a comparison operator, and either
-            a scalar or tuple consisting of the values to compare
-            the attribute to.  Valid comparison operators are shown below
-            along with the expected number of values that should be supplied.
+        :type scan_filter: A dict
+        :param scan_filter: A dictionary where the key is the
+            attribute name and the value is a
+            :class:`boto.dynamodb.condition.Condition` object.
+            Valid Condition objects include:
 
              * EQ - equal (1)
              * NE - not equal (1)
@@ -398,6 +497,9 @@ class Table(object):
         :param count: If True, Amazon DynamoDB returns a total
             number of items for the Scan operation, even if the
             operation has no matching items for the assigned filter.
+            If count is True, the actual items are not returned and
+            the count is accessible as the ``count`` attribute of
+            the returned object.
 
         :type exclusive_start_key: list or tuple
         :param exclusive_start_key: Primary key of the item from
@@ -409,8 +511,36 @@ class Table(object):
             to generate the items. This should be a subclass of
             :class:`boto.dynamodb.item.Item`
 
-        :rtype: generator
+        :return: A TableGenerator (generator) object which will iterate
+            over all results
+        :rtype: :class:`boto.dynamodb.layer2.TableGenerator`
         """
-        return self.layer2.scan(self, scan_filter, attributes_to_get,
-                                request_limit, max_results, count,
-                                exclusive_start_key, item_class=item_class)
+        return self.layer2.scan(self, *args, **kw)
+
+    def batch_get_item(self, keys, attributes_to_get=None):
+        """
+        Return a set of attributes for a multiple items from a single table
+        using their primary keys. This abstraction removes the 100 Items per
+        batch limitations as well as the "UnprocessedKeys" logic.
+
+        :type keys: list
+        :param keys: A list of scalar or tuple values.  Each element in the
+            list represents one Item to retrieve.  If the schema for the
+            table has both a HashKey and a RangeKey, each element in the
+            list should be a tuple consisting of (hash_key, range_key).  If
+            the schema for the table contains only a HashKey, each element
+            in the list should be a scalar value of the appropriate type
+            for the table schema. NOTE: The maximum number of items that
+            can be retrieved for a single operation is 100. Also, the
+            number of items retrieved is constrained by a 1 MB size limit.
+
+        :type attributes_to_get: list
+        :param attributes_to_get: A list of attribute names.
+            If supplied, only the specified attribute names will
+            be returned.  Otherwise, all attributes will be returned.
+
+        :return: A TableBatchGenerator (generator) object which will
+            iterate over all results
+        :rtype: :class:`boto.dynamodb.table.TableBatchGenerator`
+        """
+        return TableBatchGenerator(self, keys, attributes_to_get)
