@@ -19,6 +19,8 @@
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
 
+from boto.s3.user import User
+
 class ResultSet(list):
     """
     The ResultSet is used to pass results back from the Amazon services
@@ -50,7 +52,9 @@ class ResultSet(list):
         self.key_marker = None
         self.next_marker = None  # avail when delimiter used
         self.next_key_marker = None
+        self.next_upload_id_marker = None
         self.next_version_id_marker = None
+        self.next_generation_marker= None
         self.version_id_marker = None
         self.is_truncated = False
         self.next_token = None
@@ -62,6 +66,12 @@ class ResultSet(list):
                 obj = t[1](connection)
                 self.append(obj)
                 return obj
+        if name == 'Owner':
+            # Makes owner available for get_service and
+            # perhaps other lists where not handled by
+            # another element.
+            self.owner = User()
+            return self.owner
         return None
 
     def to_boolean(self, value, true_value='true'):
@@ -85,6 +95,8 @@ class ResultSet(list):
             self.version_id_marker = value
         elif name == 'NextVersionIdMarker':
             self.next_version_id_marker = value
+        elif name == 'NextGenerationMarker':
+            self.next_generation_marker = value
         elif name == 'UploadIdMarker':
             self.upload_id_marker = value
         elif name == 'NextUploadIdMarker':
@@ -93,6 +105,8 @@ class ResultSet(list):
             self.bucket = value
         elif name == 'MaxUploads':
             self.max_uploads = int(value)
+        elif name == 'MaxItems':
+            self.max_items = int(value)
         elif name == 'Prefix':
             self.prefix = value
         elif name == 'return':
@@ -153,4 +167,3 @@ class BooleanResult(object):
             self.request_id = value
         else:
             setattr(self, name, value)
-

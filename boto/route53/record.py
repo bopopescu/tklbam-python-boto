@@ -1,4 +1,6 @@
 # Copyright (c) 2010 Chris Moyer http://coredumped.org/
+# Copyright (c) 2012 Mitch Garnaat http://garnaat.org/
+# Copyright (c) 2012 Amazon.com, Inc. or its affiliates.
 # All rights reserved.
 #
 # Permission is hereby granted, free of charge, to any person obtaining a
@@ -33,7 +35,7 @@ class ResourceRecordSets(ResultSet):
     """
 
     ChangeResourceRecordSetsBody = """<?xml version="1.0" encoding="UTF-8"?>
-    <ChangeResourceRecordSetsRequest xmlns="https://route53.amazonaws.com/doc/2011-05-05/">
+    <ChangeResourceRecordSetsRequest xmlns="https://route53.amazonaws.com/doc/2012-02-29/">
             <ChangeBatch>
                 <Comment>%(comment)s</Comment>
                 <Changes>%(changes)s</Changes>
@@ -55,11 +57,16 @@ class ResourceRecordSets(ResultSet):
         ResultSet.__init__(self, [('ResourceRecordSet', Record)])
 
     def __repr__(self):
-        return '<ResourceRecordSets: %s>' % self.hosted_zone_id
+        if self.changes:
+            record_list = ','.join([c.__repr__() for c in self.changes])
+        else:
+            record_list = ','.join([record.__repr__() for record in self])
+        return '<ResourceRecordSets:%s [%s]' % (self.hosted_zone_id,
+                                                record_list)
 
     def add_change(self, action, name, type, ttl=600,
             alias_hosted_zone_id=None, alias_dns_name=None, identifier=None,
-            weight=None):
+            weight=None, region=None):
         """
         Add a change request to the set.
 
@@ -96,8 +103,8 @@ class ResourceRecordSets(ResultSet):
             Information about the domain to which you are redirecting traffic.
 
         :type identifier: str
-        :param identifier: *Weighted resource record sets only* An
-            identifier that differentiates among multiple resource
+        :param identifier: *Weighted and latency-based resource record sets
+            only* An identifier that differentiates among multiple resource
             record sets that have the same combination of DNS name and type.
 
         :type weight: int
@@ -105,13 +112,24 @@ class ResourceRecordSets(ResultSet):
             record sets that have the same combination of DNS name and type,
             a value that determines what portion of traffic for the current
             resource record set is routed to the associated location
+
+        :type region: str
+        :param region: *Latency-based resource record sets only* Among resource
+            record sets that have the same combination of DNS name and type,
+            a value that determines which region this should be associated with
+            for the latency-based routing
         """
         change = Record(name, type, ttl,
                 alias_hosted_zone_id=alias_hosted_zone_id,
                 alias_dns_name=alias_dns_name, identifier=identifier,
-                weight=weight)
+                weight=weight, region=region)
         self.changes.append([action, change])
         return change
+
+    def add_change_record(self, action, change):
+        """Add an existing record to a change set with the specified action"""
+        self.changes.append([action, change])
+        return
 
     def to_xml(self):
         """Convert this ResourceRecordSet into XML
@@ -169,6 +187,11 @@ class Record(object):
         <Weight>%(weight)s</Weight>
     """
 
+    RRRBody = """
+        <SetIdentifier>%(identifier)s</SetIdentifier>
+        <Region>%(region)s</Region>
+    """
+
     ResourceRecordsBody = """
         <TTL>%(ttl)s</TTL>
         <ResourceRecords>
@@ -188,7 +211,7 @@ class Record(object):
 
     def __init__(self, name=None, type=None, ttl=600, resource_records=None,
             alias_hosted_zone_id=None, alias_dns_name=None, identifier=None,
-            weight=None):
+            weight=None, region=None):
         self.name = name
         self.type = type
         self.ttl = ttl
@@ -199,6 +222,10 @@ class Record(object):
         self.alias_dns_name = alias_dns_name
         self.identifier = identifier
         self.weight = weight
+        self.region = region
+
+    def __repr__(self):
+        return '<Record:%s:%s:%s>' % (self.name, self.type, self.to_print())
 
     def add_value(self, value):
         """Add a resource record value"""
@@ -217,16 +244,24 @@ class Record(object):
         else:
             # Use resource record(s)
             records = ""
+
             for r in self.resource_records:
                 records += self.ResourceRecordBody % r
+
             body = self.ResourceRecordsBody % {
                 "ttl": self.ttl,
                 "records": records,
             }
+
         weight = ""
+
         if self.identifier != None and self.weight != None:
             weight = self.WRRBody % {"identifier": self.identifier, "weight":
                     self.weight}
+        elif self.identifier != None and self.region != None:
+            weight = self.RRRBody % {"identifier": self.identifier, "region":
+                    self.region}
+
         params = {
             "name": self.name,
             "type": self.type,
@@ -246,6 +281,8 @@ class Record(object):
 
         if self.identifier != None and self.weight != None:
             rr += ' (WRR id=%s, w=%s)' % (self.identifier, self.weight)
+        elif self.identifier != None and self.region != None:
+            rr += ' (LBR id=%s, region=%s)' % (self.identifier, self.region)
 
         return rr
 
@@ -266,6 +303,8 @@ class Record(object):
             self.identifier = value
         elif name == 'Weight':
             self.weight = value
+        elif name == 'Region':
+            self.region = value
 
     def startElement(self, name, attrs, connection):
         return None

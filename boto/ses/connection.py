@@ -19,15 +19,15 @@
 # WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
+import re
+import urllib
+import base64
 
 from boto.connection import AWSAuthConnection
 from boto.exception import BotoServerError
 from boto.regioninfo import RegionInfo
 import boto
 import boto.jsonresponse
-
-import urllib
-import base64
 from boto.ses import exceptions as ses_exceptions
 
 
@@ -41,7 +41,8 @@ class SESConnection(AWSAuthConnection):
     def __init__(self, aws_access_key_id=None, aws_secret_access_key=None,
                  is_secure=True, port=None, proxy=None, proxy_port=None,
                  proxy_user=None, proxy_pass=None, debug=0,
-                 https_connection_factory=None, region=None, path='/'):
+                 https_connection_factory=None, region=None, path='/',
+                 security_token=None, validate_certs=True):
         if not region:
             region = RegionInfo(self, self.DefaultRegionName,
                                 self.DefaultRegionEndpoint)
@@ -50,7 +51,9 @@ class SESConnection(AWSAuthConnection):
                                    aws_access_key_id, aws_secret_access_key,
                                    is_secure, port, proxy, proxy_port,
                                    proxy_user, proxy_pass, debug,
-                                   https_connection_factory, path)
+                                   https_connection_factory, path,
+                                   security_token=security_token,
+                                   validate_certs=validate_certs)
 
     def _required_auth_capability(self):
         return ['ses']
@@ -99,8 +102,13 @@ class SESConnection(AWSAuthConnection):
         )
         body = response.read()
         if response.status == 200:
-            list_markers = ('VerifiedEmailAddresses', 'SendDataPoints')
-            e = boto.jsonresponse.Element(list_marker=list_markers)
+            list_markers = ('VerifiedEmailAddresses', 'Identities',
+                            'DkimTokens', 'VerificationAttributes',
+                            'SendDataPoints')
+            item_markers = ('member', 'item', 'entry')
+
+            e = boto.jsonresponse.Element(list_marker=list_markers,
+                                          item_marker=item_markers)
             h = boto.jsonresponse.XmlHandler(e, None)
             h.parse(body)
             return e
@@ -143,6 +151,22 @@ class SESConnection(AWSAuthConnection):
             # Recipient address ends with a dot/period. This is invalid.
             ExceptionToRaise = ses_exceptions.SESDomainEndsWithDotError
             exc_reason = "Domain ends with dot."
+        elif "Local address contains control or whitespace" in body:
+            # I think this pertains to the recipient address.
+            ExceptionToRaise = ses_exceptions.SESLocalAddressCharacterError
+            exc_reason = "Local address contains control or whitespace."
+        elif "Illegal address" in body:
+            # A clearly mal-formed address.
+            ExceptionToRaise = ses_exceptions.SESIllegalAddressError
+            exc_reason = "Illegal address"
+        # The re.search is to distinguish from the
+        # SESAddressNotVerifiedError error above.
+        elif re.search('Identity.*is not verified', body):
+            ExceptionToRaise = ses_exceptions.SESIdentityNotVerifiedError
+            exc_reason = "Identity is not verified."
+        elif "ownership not confirmed" in body:
+            ExceptionToRaise = ses_exceptions.SESDomainNotConfirmedError
+            exc_reason = "Domain ownership is not confirmed."
         else:
             # This is either a common AWS error, or one that we don't devote
             # its own exception to.
@@ -151,8 +175,9 @@ class SESConnection(AWSAuthConnection):
 
         raise ExceptionToRaise(response.status, exc_reason, body)
 
-    def send_email(self, source, subject, body, to_addresses, cc_addresses=None,
-                   bcc_addresses=None, format='text', reply_addresses=None,
+    def send_email(self, source, subject, body, to_addresses,
+                   cc_addresses=None, bcc_addresses=None,
+                   format='text', reply_addresses=None,
                    return_path=None, text_body=None, html_body=None):
         """Composes an email message based on input data, and then immediately
         queues the message for sending.
@@ -190,9 +215,9 @@ class SESConnection(AWSAuthConnection):
         :param return_path: The email address to which bounce notifications are
                             to be forwarded. If the message cannot be delivered
                             to the recipient, then an error message will be
-                            returned from the recipient's ISP; this message will
-                            then be forwarded to the email address specified by
-                            the ReturnPath parameter.
+                            returned from the recipient's ISP; this message
+                            will then be forwarded to the email address
+                            specified by the ReturnPath parameter.
 
         :type text_body: string
         :param text_body: The text body to send with this email.
@@ -205,11 +230,13 @@ class SESConnection(AWSAuthConnection):
         if body is not None:
             if format == "text":
                 if text_body is not None:
-                    raise Warning("You've passed in both a body and a text_body; please choose one or the other.")
+                    raise Warning("You've passed in both a body and a "
+                                  "text_body; please choose one or the other.")
                 text_body = body
             else:
                 if html_body is not None:
-                    raise Warning("You've passed in both a body and an html_body; please choose one or the other.")
+                    raise Warning("You've passed in both a body and an "
+                                  "html_body; please choose one or the other.")
                 html_body = body
 
         params = {
@@ -225,7 +252,7 @@ class SESConnection(AWSAuthConnection):
         if text_body is not None:
             params['Message.Body.Text.Data'] = text_body
 
-        if(format not in ("text","html")):
+        if(format not in ("text", "html")):
             raise ValueError("'format' argument must be 'text' or 'html'")
 
         if(not (html_body or text_body)):
@@ -277,6 +304,10 @@ class SESConnection(AWSAuthConnection):
         :param destinations: A list of destinations for the message.
 
         """
+
+        if isinstance(raw_message, unicode):
+            raw_message = raw_message.encode('utf-8')
+
         params = {
             'RawMessage.Data': base64.b64encode(raw_message),
         }
@@ -350,4 +381,142 @@ class SESConnection(AWSAuthConnection):
         """
         return self._make_request('VerifyEmailAddress', {
             'EmailAddress': email_address,
+        })
+
+    def verify_domain_dkim(self, domain):
+        """
+        Returns a set of DNS records, or tokens, that must be published in the
+        domain name's DNS to complete the DKIM verification process. These
+        tokens are DNS ``CNAME`` records that point to DKIM public keys hosted
+        by Amazon SES. To complete the DKIM verification process, these tokens
+        must be published in the domain's DNS.  The tokens must remain
+        published in order for Easy DKIM signing to function correctly.
+
+        After the tokens are added to the domain's DNS, Amazon SES will be able
+        to DKIM-sign email originating from that domain.  To enable or disable
+        Easy DKIM signing for a domain, use the ``SetIdentityDkimEnabled``
+        action.  For more information about Easy DKIM, go to the `Amazon SES
+        Developer Guide
+        <http://docs.amazonwebservices.com/ses/latest/DeveloperGuide>`_.
+
+        :type domain: string
+        :param domain: The domain name.
+
+        """
+        return self._make_request('VerifyDomainDkim', {
+            'Domain': domain,
+        })
+
+    def set_identity_dkim_enabled(self, identity, dkim_enabled):
+        """Enables or disables DKIM signing of email sent from an identity.
+
+        * If Easy DKIM signing is enabled for a domain name identity (e.g.,
+        * ``example.com``),
+          then Amazon SES will DKIM-sign all email sent by addresses under that
+          domain name (e.g., ``user@example.com``)
+        * If Easy DKIM signing is enabled for an email address, then Amazon SES
+          will DKIM-sign all email sent by that email address.
+
+        For email addresses (e.g., ``user@example.com``), you can only enable
+        Easy DKIM signing  if the corresponding domain (e.g., ``example.com``)
+        has been set up for Easy DKIM using the AWS Console or the
+        ``VerifyDomainDkim`` action.
+
+        :type identity: string
+        :param identity: An email address or domain name.
+
+        :type dkim_enabled: bool
+        :param dkim_enabled: Specifies whether or not to enable DKIM signing.
+
+        """
+        return self._make_request('SetIdentityDkimEnabled', {
+            'Identity': identity,
+            'DkimEnabled': 'true' if dkim_enabled else 'false'
+        })
+
+    def get_identity_dkim_attributes(self, identities):
+        """Get attributes associated with a list of verified identities.
+
+        Given a list of verified identities (email addresses and/or domains),
+        returns a structure describing identity notification attributes.
+
+        :type identities: list
+        :param identities: A list of verified identities (email addresses
+            and/or domains).
+
+        """
+        params = {}
+        self._build_list_params(params, identities, 'Identities.member')
+        return self._make_request('GetIdentityDkimAttributes', params)
+
+    def list_identities(self):
+        """Returns a list containing all of the identities (email addresses
+        and domains) for a specific AWS Account, regardless of
+        verification status.
+
+        :rtype: dict
+        :returns: A ListIdentitiesResponse structure. Note that
+                  keys must be unicode strings.
+        """
+        return self._make_request('ListIdentities')
+
+    def get_identity_verification_attributes(self, identities):
+        """Given a list of identities (email addresses and/or domains),
+        returns the verification status and (for domain identities)
+        the verification token for each identity.
+
+        :type identities: list of strings or string
+        :param identities: List of identities.
+
+        :rtype: dict
+        :returns: A GetIdentityVerificationAttributesResponse structure.
+                  Note that keys must be unicode strings.
+        """
+        params = {}
+        self._build_list_params(params, identities,
+                               'Identities.member')
+        return self._make_request('GetIdentityVerificationAttributes', params)
+
+    def verify_domain_identity(self, domain):
+        """Verifies a domain.
+
+        :type domain: string
+        :param domain: The domain to be verified.
+
+        :rtype: dict
+        :returns: A VerifyDomainIdentityResponse structure. Note that
+                  keys must be unicode strings.
+        """
+        return self._make_request('VerifyDomainIdentity', {
+            'Domain': domain,
+        })
+
+    def verify_email_identity(self, email_address):
+        """Verifies an email address. This action causes a confirmation
+        email message to be sent to the specified address.
+
+        :type email_adddress: string
+        :param email_address: The email address to be verified.
+
+        :rtype: dict
+        :returns: A VerifyEmailIdentityResponse structure. Note that keys must
+                  be unicode strings.
+        """
+        return self._make_request('VerifyEmailIdentity', {
+            'EmailAddress': email_address,
+        })
+
+    def delete_identity(self, identity):
+        """Deletes the specified identity (email address or domain) from
+        the list of verified identities.
+
+        :type identity: string
+        :param identity: The identity to be deleted.
+
+        :rtype: dict
+        :returns: A DeleteIdentityResponse structure. Note that keys must
+                  be unicode strings.
+        """
+        return self._make_request('DeleteIdentity', {
+            'Identity': identity,
         })

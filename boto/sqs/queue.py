@@ -14,7 +14,7 @@
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
 # OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABIL-
 # ITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-# SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, 
+# SHALL THE AUTHOR BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
 # WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
 # IN THE SOFTWARE.
@@ -54,6 +54,12 @@ class Queue:
         return  val
     name = property(_name)
 
+    def _arn(self):
+        parts = self.id.split('/')
+        return 'arn:aws:sqs:%s:%s:%s' % (
+            self.connection.region.name, parts[1], parts[2])
+    arn = property(_arn)
+
     def startElement(self, name, attrs, connection):
         return None
 
@@ -67,9 +73,10 @@ class Queue:
 
     def set_message_class(self, message_class):
         """
-        Set the message class that should be used when instantiating messages read
-        from the queue.  By default, the class boto.sqs.message.Message is used but
-        this can be overriden with any class that behaves like a message.
+        Set the message class that should be used when instantiating
+        messages read from the queue.  By default, the class
+        :class:`boto.sqs.message.Message` is used but this can be overriden
+        with any class that behaves like a message.
 
         :type message_class: Message-like class
         :param message_class:  The new Message class
@@ -89,6 +96,7 @@ class Queue:
                            CreatedTimestamp,
                            LastModifiedTimestamp,
                            Policy
+                           ReceiveMessageWaitTimeSeconds
         :rtype: Attribute object
         :return: An Attribute object which is a mapping type holding the
                  requested name/value pairs
@@ -98,14 +106,14 @@ class Queue:
     def set_attribute(self, attribute, value):
         """
         Set a new value for an attribute of the Queue.
-        
+
         :type attribute: String
         :param attribute: The name of the attribute you want to set.  The
                            only valid value at this time is: VisibilityTimeout
         :type value: int
         :param value: The new value for the attribute.
-                      For VisibilityTimeout the value must be an
-                      integer number of seconds from 0 to 86400.
+            For VisibilityTimeout the value must be an
+            integer number of seconds from 0 to 86400.
 
         :rtype: bool
         :return: True if successful, otherwise False.
@@ -115,7 +123,7 @@ class Queue:
     def get_timeout(self):
         """
         Get the visibility timeout for the queue.
-        
+
         :rtype: int
         :return: The number of seconds as an integer.
         """
@@ -140,49 +148,58 @@ class Queue:
 
         :type label: str or unicode
         :param label: A unique identification of the permission you are setting.
-                      Maximum of 80 characters ``[0-9a-zA-Z_-]``
-                      Example, AliceSendMessage
+            Maximum of 80 characters ``[0-9a-zA-Z_-]``
+            Example, AliceSendMessage
 
         :type aws_account_id: str or unicode
-        :param principal_id: The AWS account number of the principal who will be given
-                             permission.  The principal must have an AWS account, but
-                             does not need to be signed up for Amazon SQS. For information
-                             about locating the AWS account identification.
+        :param principal_id: The AWS account number of the principal who
+            will be given permission.  The principal must have an AWS account,
+            but does not need to be signed up for Amazon SQS. For information
+            about locating the AWS account identification.
 
         :type action_name: str or unicode
         :param action_name: The action.  Valid choices are:
-                            \*|SendMessage|ReceiveMessage|DeleteMessage|
-                            ChangeMessageVisibility|GetQueueAttributes
+            SendMessage|ReceiveMessage|DeleteMessage|
+            ChangeMessageVisibility|GetQueueAttributes|*
 
         :rtype: bool
         :return: True if successful, False otherwise.
 
         """
-        return self.connection.add_permission(self, label, aws_account_id, action_name)
+        return self.connection.add_permission(self, label, aws_account_id,
+                                              action_name)
 
     def remove_permission(self, label):
         """
         Remove a permission from a queue.
 
         :type label: str or unicode
-        :param label: The unique label associated with the permission being removed.
+        :param label: The unique label associated with the permission
+            being removed.
 
         :rtype: bool
         :return: True if successful, False otherwise.
         """
         return self.connection.remove_permission(self, label)
 
-    def read(self, visibility_timeout=None):
+    def read(self, visibility_timeout=None, wait_time_seconds=None):
         """
         Read a single message from the queue.
-        
+
         :type visibility_timeout: int
         :param visibility_timeout: The timeout for this message in seconds
+
+        :type wait_time_seconds: int
+        :param wait_time_seconds: The duration (in seconds) for which the call
+            will wait for a message to arrive in the queue before returning.
+            If a message is available, the call will return sooner than
+            wait_time_seconds.
 
         :rtype: :class:`boto.sqs.message.Message`
         :return: A single message or None if queue is empty
         """
-        rs = self.get_messages(1, visibility_timeout)
+        rs = self.get_messages(1, visibility_timeout,
+                               wait_time_seconds=wait_time_seconds)
         if len(rs) == 1:
             return rs[0]
         else:
@@ -198,10 +215,28 @@ class Queue:
         :rtype: :class:`boto.sqs.message.Message`
         :return: The :class:`boto.sqs.message.Message` object that was written.
         """
-        new_msg = self.connection.send_message(self, message.get_body_encoded(), delay_seconds)
+        new_msg = self.connection.send_message(self,
+                                               message.get_body_encoded(),
+                                               delay_seconds)
         message.id = new_msg.id
         message.md5 = new_msg.md5
         return message
+
+    def write_batch(self, messages):
+        """
+        Delivers up to 10 messages in a single request.
+
+        :type messages: List of lists.
+        :param messages: A list of lists or tuples.  Each inner
+            tuple represents a single message to be written
+            and consists of and ID (string) that must be unique
+            within the list of messages, the message body itself
+            which can be a maximum of 64K in length, and an
+            integer which represents the delay time (in seconds)
+            for the message (0-900) before the message will
+            be delivered to the queue.
+        """
+        return self.connection.send_message_batch(self, messages)
 
     def new_message(self, body=''):
         """
@@ -219,32 +254,37 @@ class Queue:
 
     # get a variable number of messages, returns a list of messages
     def get_messages(self, num_messages=1, visibility_timeout=None,
-                     attributes=None):
+                     attributes=None, wait_time_seconds=None):
         """
         Get a variable number of messages.
 
         :type num_messages: int
-        :param num_messages: The maximum number of messages to read from the queue.
-        
+        :param num_messages: The maximum number of messages to read from
+            the queue.
+
         :type visibility_timeout: int
         :param visibility_timeout: The VisibilityTimeout for the messages read.
 
         :type attributes: str
-        :param attributes: The name of additional attribute to return with response
-                           or All if you want all attributes.  The default is to
-                           return no additional attributes.  Valid values:
-                           All
-                           SenderId
-                           SentTimestamp
-                           ApproximateReceiveCount
-                           ApproximateFirstReceiveTimestamp
-                           
+        :param attributes: The name of additional attribute to return
+            with response or All if you want all attributes.  The
+            default is to return no additional attributes.  Valid
+            values: All SenderId SentTimestamp ApproximateReceiveCount
+            ApproximateFirstReceiveTimestamp
+
+        :type wait_time_seconds: int
+        :param wait_time_seconds: The duration (in seconds) for which the call
+            will wait for a message to arrive in the queue before returning.
+            If a message is available, the call will return sooner than
+            wait_time_seconds.
+
         :rtype: list
         :return: A list of :class:`boto.sqs.message.Message` objects.
         """
-        return self.connection.receive_message(self, number_messages=num_messages,
-                                               visibility_timeout=visibility_timeout,
-                                               attributes=attributes)
+        return self.connection.receive_message(
+            self, number_messages=num_messages,
+            visibility_timeout=visibility_timeout, attributes=attributes,
+            wait_time_seconds=wait_time_seconds)
 
     def delete_message(self, message):
         """
@@ -257,6 +297,27 @@ class Queue:
         :return: True if successful, False otherwise
         """
         return self.connection.delete_message(self, message)
+
+    def delete_message_batch(self, messages):
+        """
+        Deletes a list of messages in a single request.
+
+        :type messages: List of :class:`boto.sqs.message.Message` objects.
+        :param messages: A list of message objects.
+        """
+        return self.connection.delete_message_batch(self, messages)
+
+    def change_message_visibility_batch(self, messages):
+        """
+        A batch version of change_message_visibility that can act
+        on up to 10 messages at a time.
+
+        :type messages: List of tuples.
+        :param messages: A list of tuples where each tuple consists
+            of a :class:`boto.sqs.message.Message` object and an integer
+            that represents the new visibility timeout for that message.
+        """
+        return self.connection.change_message_visibility_batch(self, messages)
 
     def delete(self):
         """
@@ -356,9 +417,9 @@ class Queue:
         """
         Read all messages from the queue and persist them to S3.
         Messages are stored in the S3 bucket using a naming scheme of::
-        
+
             <queue_id>/<message_id>
-        
+
         Messages are deleted from the queue after being saved to S3.
         Returns the number of messages saved.
         """

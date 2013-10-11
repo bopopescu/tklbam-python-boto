@@ -2,7 +2,8 @@ from datetime import datetime
 
 from boto.resultset import ResultSet
 
-class Stack:
+
+class Stack(object):
     def __init__(self, connection=None):
         self.connection = connection
         self.creation_time = None
@@ -11,6 +12,8 @@ class Stack:
         self.notification_arns = []
         self.outputs = []
         self.parameters = []
+        self.capabilities = []
+        self.tags = []
         self.stack_id = None
         self.stack_status = None
         self.stack_name = None
@@ -24,18 +27,31 @@ class Stack:
         elif name == "Outputs":
             self.outputs = ResultSet([('member', Output)])
             return self.outputs
+        elif name == "Capabilities":
+            self.capabilities = ResultSet([('member', Capability)])
+            return self.capabilities
+        elif name == "Tags":
+            self.tags = Tag()
+            return self.tags
+        elif name == 'NotificationARNs':
+            self.notification_arns = ResultSet([('member', NotificationARN)])
+            return self.notification_arns
         else:
             return None
 
     def endElement(self, name, value, connection):
         if name == 'CreationTime':
-            self.creation_time = datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ')
+            try:
+                self.creation_time = datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ')
+            except ValueError:
+                self.creation_time = datetime.strptime(value, '%Y-%m-%dT%H:%M:%S.%fZ')
         elif name == "Description":
             self.description = value
         elif name == "DisableRollback":
-            self.disable_rollback = bool(value)
-        elif name == "NotificationARNs":
-            self.notification_arns = value
+            if str(value).lower() == 'true':
+                self.disable_rollback = True
+            else:
+                self.disable_rollback = False
         elif name == 'StackId':
             self.stack_id = value
         elif name == 'StackName':
@@ -91,7 +107,8 @@ class Stack:
     def get_template(self):
         return self.connection.get_template(stack_name_or_id=self.stack_id)
 
-class StackSummary:
+
+class StackSummary(object):
     def __init__(self, connection=None):
         self.connection = connection
         self.stack_id = None
@@ -112,9 +129,15 @@ class StackSummary:
         elif name == 'StackName':
             self.stack_name = value
         elif name == 'CreationTime':
-            self.creation_time = datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ')
+            try:
+                self.creation_time = datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ')
+            except ValueError:
+                self.creation_time = datetime.strptime(value, '%Y-%m-%dT%H:%M:%S.%fZ')
         elif name == "DeletionTime":
-            self.deletion_time = datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ')
+            try:
+                self.deletion_time = datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ')
+            except ValueError:
+                self.deletion_time = datetime.strptime(value, '%Y-%m-%dT%H:%M:%S.%fZ')
         elif name == 'TemplateDescription':
             self.template_description = value
         elif name == "member":
@@ -122,7 +145,8 @@ class StackSummary:
         else:
             setattr(self, name, value)
 
-class Parameter:
+
+class Parameter(object):
     def __init__(self, connection=None):
         self.connection = None
         self.key = None
@@ -142,7 +166,8 @@ class Parameter:
     def __repr__(self):
         return "Parameter:\"%s\"=\"%s\"" % (self.key, self.value)
 
-class Output:
+
+class Output(object):
     def __init__(self, connection=None):
         self.connection = connection
         self.description = None
@@ -165,7 +190,63 @@ class Output:
     def __repr__(self):
         return "Output:\"%s\"=\"%s\"" % (self.key, self.value)
 
-class StackResource:
+
+class Capability(object):
+    def __init__(self, connection=None):
+        self.connection = None
+        self.value = None
+
+    def startElement(self, name, attrs, connection):
+        return None
+
+    def endElement(self, name, value, connection):
+        self.value = value
+
+    def __repr__(self):
+        return "Capability:\"%s\"" % (self.value)
+
+
+class Tag(dict):
+
+    def __init__(self, connection=None):
+        dict.__init__(self)
+        self.connection = connection
+        self._current_key = None
+        self._current_value = None
+
+    def startElement(self, name, attrs, connection):
+        return None
+
+    def endElement(self, name, value, connection):
+        if name == "Key":
+            self._current_key = value
+        elif name == "Value":
+            self._current_value = value
+        else:
+            setattr(self, name, value)
+
+        if self._current_key and self._current_value:
+            self[self._current_key] = self._current_value
+            self._current_key = None
+            self._current_value = None
+
+
+class NotificationARN(object):
+    def __init__(self, connection=None):
+        self.connection = None
+        self.value = None
+
+    def startElement(self, name, attrs, connection):
+        return None
+
+    def endElement(self, name, value, connection):
+        self.value = value
+
+    def __repr__(self):
+        return "NotificationARN:\"%s\"" % (self.value)
+
+
+class StackResource(object):
     def __init__(self, connection=None):
         self.connection = connection
         self.description = None
@@ -199,7 +280,10 @@ class StackResource:
         elif name == "StackName":
             self.stack_name = value
         elif name == "Timestamp":
-            self.timestamp = datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ')
+            try:
+                self.timestamp = datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ')
+            except ValueError:
+                self.timestamp = datetime.strptime(value, '%Y-%m-%dT%H:%M:%S.%fZ')
         else:
             setattr(self, name, value)
 
@@ -207,7 +291,8 @@ class StackResource:
         return "StackResource:%s (%s)" % (self.logical_resource_id,
                 self.resource_type)
 
-class StackResourceSummary:
+
+class StackResourceSummary(object):
     def __init__(self, connection=None):
         self.connection = connection
         self.last_updated_timestamp = None
@@ -222,8 +307,16 @@ class StackResourceSummary:
 
     def endElement(self, name, value, connection):
         if name == "LastUpdatedTimestamp":
-            self.last_updated_timestampe = datetime.strptime(value,
-                '%Y-%m-%dT%H:%M:%SZ')
+            try:
+                self.last_updated_timestamp = datetime.strptime(
+                    value,
+                    '%Y-%m-%dT%H:%M:%SZ'
+                )
+            except ValueError:
+                self.last_updated_timestamp = datetime.strptime(
+                    value,
+                    '%Y-%m-%dT%H:%M:%S.%fZ'
+                )
         elif name == "LogicalResourceId":
             self.logical_resource_id = value
         elif name == "PhysicalResourceId":
@@ -241,7 +334,8 @@ class StackResourceSummary:
         return "StackResourceSummary:%s (%s)" % (self.logical_resource_id,
                 self.resource_type)
 
-class StackEvent:
+
+class StackEvent(object):
     valid_states = ("CREATE_IN_PROGRESS", "CREATE_FAILED", "CREATE_COMPLETE",
             "DELETE_IN_PROGRESS", "DELETE_FAILED", "DELETE_COMPLETE")
     def __init__(self, connection=None):
@@ -280,7 +374,10 @@ class StackEvent:
         elif name == "StackName":
             self.stack_name = value
         elif name == "Timestamp":
-            self.timestamp = datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ')
+            try:
+                self.timestamp = datetime.strptime(value, '%Y-%m-%dT%H:%M:%SZ')
+            except ValueError:
+                self.timestamp = datetime.strptime(value, '%Y-%m-%dT%H:%M:%S.%fZ')
         else:
             setattr(self, name, value)
 
