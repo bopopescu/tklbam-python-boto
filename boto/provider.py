@@ -158,9 +158,11 @@ class Provider(object):
     def __init__(self, name, access_key=None, secret_key=None,
                  security_token=None):
         self.host = None
-        self.access_key = access_key
-        self.secret_key = secret_key
-        self.security_token = security_token
+
+        self._access_key = access_key
+        self._secret_key = secret_key
+        self._security_token = security_token
+
         self.name = name
         self.acl_class = self.AclClassMap[self.name]
         self.canned_acls = self.CannedAclsMap[self.name]
@@ -202,6 +204,24 @@ class Provider(object):
             # the secret key must be bytes and not unicode to work
             #  properly with hmac.new (see http://bugs.python.org/issue5285)
             self.secret_key = str(self.secret_key)
+
+    def access_key(self, val=None):
+        if val is not None:
+            self._access_key = val
+        return self._access_key
+    access_key = property(access_key, access_key)
+
+    def secret_key(self, val=None):
+        if val is not None:
+            self._secret_key = val
+        return self._secret_key
+    secret_key = property(secret_key, secret_key)
+
+    def security_token(self, val=None):
+        if val is not None:
+            self._security_token = val
+        return self._security_token
+    security_token = property(security_token, security_token)
 
     def configure_headers(self):
         header_info_map = self.HeaderInfoMap[self.name]
