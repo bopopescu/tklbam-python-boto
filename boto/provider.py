@@ -61,6 +61,7 @@ STORAGE_DATA_ERROR = 'StorageDataError'
 STORAGE_PERMISSIONS_ERROR = 'StoragePermissionsError'
 STORAGE_RESPONSE_ERROR = 'StorageResponseError'
 
+import stsagent
 
 class Provider(object):
 
@@ -159,6 +160,8 @@ class Provider(object):
                  security_token=None):
         self.host = None
 
+        self.stsagent = None
+
         self._access_key = access_key
         self._secret_key = secret_key
         self._security_token = security_token
@@ -177,51 +180,57 @@ class Provider(object):
     def get_credentials(self, access_key=None, secret_key=None, security_token=None):
         access_key_name, secret_key_name = self.CredentialMap[self.name]
         if access_key is not None:
-            self.access_key = access_key
+            self._access_key = access_key
         elif os.environ.has_key(access_key_name.upper()):
-            self.access_key = os.environ[access_key_name.upper()]
+            self._access_key = os.environ[access_key_name.upper()]
         elif config.has_option('Credentials', access_key_name):
-            self.access_key = config.get('Credentials', access_key_name)
+            self._access_key = config.get('Credentials', access_key_name)
 
         if secret_key is not None:
-            self.secret_key = secret_key
+            self._secret_key = secret_key
         elif os.environ.has_key(secret_key_name.upper()):
-            self.secret_key = os.environ[secret_key_name.upper()]
+            self._secret_key = os.environ[secret_key_name.upper()]
         elif config.has_option('Credentials', secret_key_name):
-            self.secret_key = config.get('Credentials', secret_key_name)
+            self._secret_key = config.get('Credentials', secret_key_name)
 
         security_token_name = self.HeaderInfoMap[self.name][SECURITY_TOKEN_HEADER_KEY]
         security_token_name_env = security_token_name.upper().replace('-', '_')
 
         if security_token is not None:
-            self.security_token = security_token
+            self._security_token = security_token
         elif os.environ.has_key(security_token_name_env):
-            self.security_token = os.environ[security_token_name_env]
+            self._security_token = os.environ[security_token_name_env]
         elif config.has_option('Credentials', security_token_name):
-            self.secret_key = config.get('Credentials', security_token_name)
+            self._security_token = config.get('Credentials', security_token_name)
 
-        if isinstance(self.secret_key, unicode):
+        if isinstance(self._secret_key, unicode):
             # the secret key must be bytes and not unicode to work
             #  properly with hmac.new (see http://bugs.python.org/issue5285)
-            self.secret_key = str(self.secret_key)
+            self._secret_key = str(self._secret_key)
 
-    def access_key(self, val=None):
-        if val is not None:
-            self._access_key = val
+        stsagent_command = os.environ.get('AWS_STSAGENT')
+        if stsagent_command:
+            self.stsagent = stsagent.STSAgent(stsagent_command, 60)
+
+    @property
+    def access_key(self):
+        if self.stsagent:
+            return self.stsagent.credentials.access_key
+
         return self._access_key
-    access_key = property(access_key, access_key)
 
-    def secret_key(self, val=None):
-        if val is not None:
-            self._secret_key = val
+    @property
+    def secret_key(self):
+        if self.stsagent:
+            return self.stsagent.credentials.secret_key
+
         return self._secret_key
-    secret_key = property(secret_key, secret_key)
 
-    def security_token(self, val=None):
-        if val is not None:
-            self._security_token = val
+    @property
+    def security_token(self):
+        if self.stsagent:
+            return self.stsagent.credentials.session_token
         return self._security_token
-    security_token = property(security_token, security_token)
 
     def configure_headers(self):
         header_info_map = self.HeaderInfoMap[self.name]
