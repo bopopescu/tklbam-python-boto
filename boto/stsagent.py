@@ -2,38 +2,28 @@ import os
 import datetime
 import commands
 
+import dateutil.parser
+
+from retry import retry
+
 class Error(Exception):
     pass
 
-import dateutil.parser
-
-class Timeout(Exception):
-    pass
-
-STATUS_TIMEDOUT = 124
-TIMEOUT_SECONDS = 3
-TIMEOUT_RETRY = 10
-
-def _getstatusoutput(command, timeout=TIMEOUT_SECONDS, timeout_retry=TIMEOUT_RETRY):
+@retry(retries=10, delay=1)
+def exec_stsagent(command, timeout=30):
 
     def _timeout_getstatusoutput(timeout, command):
         status, output = commands.getstatusoutput("timeout %d %s" % (timeout, command))
-        if os.WIFEXITED(status) and os.WEXITSTATUS(status) == STATUS_TIMEDOUT:
-            raise Timeout()
+        if os.WIFEXITED(status) and os.WEXITSTATUS(status) == 124:
+            raise Error("sts agent timed out")
 
         return status, output
 
-    i = 0
-    while timeout_retry == -1 or (i < timeout_retry):
-        try:
-            status, output = _timeout_getstatusoutput(timeout, command)
-            return status, output
-        except Timeout:
-            pass
+    status, output = _timeout_getstatusoutput(timeout, command)
+    if status != 0:
+        raise Error("sts agent error: " + output)
 
-        i += 1
-
-    return (STATUS_TIMEDOUT, '')
+    return output
 
 def utcnow():
 
@@ -67,9 +57,7 @@ class STSAgent(object):
         self.renew_credentials()
 
     def renew_credentials(self):
-        status, output = _getstatusoutput(self.command)
-        if status != 0:
-            raise Error("sts agent error: " + output)
+        output = exec_stsagent(self.command)
 
         vals = output.split()
         if len(vals) != 4:
