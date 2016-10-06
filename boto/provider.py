@@ -65,6 +65,8 @@ import stsagent
 
 class Provider(object):
 
+    stsagent = None
+
     CredentialMap = {
         'aws' : ('aws_access_key_id', 'aws_secret_access_key'),
         'google' : ('gs_access_key_id', 'gs_secret_access_key'),
@@ -210,7 +212,9 @@ class Provider(object):
 
         stsagent_command = os.environ.get('AWS_STSAGENT')
         if stsagent_command:
-            self.stsagent = stsagent.STSAgent(stsagent_command, 60)
+            if not Provider.stsagent:
+                Provider.stsagent = stsagent.STSAgent(stsagent_command, 60)
+            self.stsagent = Provider.stsagent
 
     @property
     def access_key(self):
