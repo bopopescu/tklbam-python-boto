@@ -3,7 +3,7 @@ Section: python
 Priority: optional
 Maintainer: Liraz Siri <liraz@turnkeylinux.org>
 Build-Depends:
- debhelper (>= 7),
+ debhelper (>= 10),
  python-all (>= 2.6.6-3),
 X-Python-Version: >= 2.5
 Homepage: http://code.google.com/p/boto/
