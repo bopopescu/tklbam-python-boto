@@ -6,7 +6,7 @@ Build-Depends:
  debhelper (>= 10),
  dh-python,
  python-all (>= 2.6.6-3~),
-Homepage: http://code.google.com/p/boto/
+Homepage: https://github.com/boto/boto
 Standards-Version: 4.0.0
 X-Python-Version: >= 2.6
 
